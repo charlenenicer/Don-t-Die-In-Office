@@ -128,6 +128,10 @@ class App {
     // Setup event listeners
     this.setupEventListeners();
 
+    // Keep the hint current as the player moves around and sits
+    window.addEventListener('seat-change', () => this.refreshHint());
+    setInterval(() => this.refreshHint(), 150);
+
     // Listen for transcript updates
     window.addEventListener('transcript', (event: any) => {
       this.addTranscriptLine(event.detail.role, event.detail.text);
@@ -180,17 +184,7 @@ class App {
         .join('');
     }
 
-    // Update hint based on nearby interactables
-    const nearbyChar = this.game?.getNearbyCharacter();
-    const nearbyItem = this.game?.getNearbyItem();
-    
-    if (nearbyChar) {
-      this.hintElement!.textContent = `Press E to talk to ${nearbyChar.name}`;
-    } else if (nearbyItem && !nearbyItem.collected) {
-      this.hintElement!.textContent = `Press E to collect ${nearbyItem.name}`;
-    } else {
-      this.hintElement!.textContent = 'WASD/Arrows to move • E to interact';
-    }
+    this.refreshHint();
 
     // Show/hide choice modal
     if (state.activeChoice) {
@@ -208,6 +202,24 @@ class App {
     if (this.game?.getVoiceClient().isActive()) {
       this.transcriptPanel?.classList.add('visible');
     }
+  }
+
+  private refreshHint() {
+    if (!this.hintElement || !this.game) return;
+    const nearbyChar = this.game.getNearbyCharacter();
+    const nearbyItem = this.game.getNearbyItem();
+
+    let text = 'WASD/Arrows to move • E to interact';
+    if (this.game.isSitting()) {
+      text = 'Seated • press WASD / arrows to stand up';
+    } else if (nearbyChar) {
+      text = `Press E to talk to ${nearbyChar.name}`;
+    } else if (nearbyItem && !nearbyItem.collected) {
+      text = `Press E to collect ${nearbyItem.name}`;
+    } else if (this.game.hasSeatNearby()) {
+      text = 'Click a white circle to sit • WASD to move';
+    }
+    if (this.hintElement.textContent !== text) this.hintElement.textContent = text;
   }
 
   private showChoice(choice: any) {

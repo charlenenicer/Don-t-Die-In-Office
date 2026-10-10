@@ -18,7 +18,7 @@ Some characters manipulate you, one gets jealous after promotion, some give conf
 
 Inspired by House House's *Big Walk*: soft pastel low-poly geometry, chunky round characters, minimal faces, flat lighting, gentle fog, wide calm spaces, and playful bobbing movement. All-original procedural art from primitives.
 
-**Setting:** One office floor with cubicle pods, kitchen, meeting room, boss's glass corner office, plants, and windows.
+**Setting:** One enclosed office floor: an open-plan center with desks and computers, a visible lunch room, a copy room, and a back row of glass-fronted rooms (meeting room, manager office, boss corner office), plus reception, lounges, plants, and windows.
 
 **Controls:**
 - WASD/Arrows: Move
