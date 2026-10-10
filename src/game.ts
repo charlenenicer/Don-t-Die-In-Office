@@ -3,12 +3,13 @@ import { GameEngine } from './game-engine';
 import { CHARACTERS } from './characters';
 import { ITEMS } from './items';
 import type { Character, InventoryItem } from './types';
+import { GAME_HOURS_PER_REAL_SECOND } from './types';
 import { VoiceClient } from './voice-client';
 import {
   FOG_COLOR, PLAYER_COLORS, animateBird, buildWorld, colorsForCharacter,
-  createBird, createSkyTexture, createWibbler,
+  createBird, createSkyTexture, createWibbler, roomAt,
 } from './visuals';
-import type { BirdRig, Collider, Seat } from './visuals';
+import type { BirdRig, Collider, Room, Seat } from './visuals';
 
 export class Game {
   private scene: THREE.Scene;
@@ -22,14 +23,20 @@ export class Game {
   private sun: THREE.DirectionalLight;
   private walkAmount = 0;
   private colliders: Collider[] = [];
+  private clockAccumulator = 0;
   private seats: Seat[] = [];
+  private rooms: Room[] = [];
+  private walls: THREE.Object3D[] = [];
+  private occlusionRay = new THREE.Raycaster();
+  private playerRoom: Room | null = null;
   private seatMarkers: THREE.Sprite[] = [];
   private currentSeat: Seat | null = null;
   private lastSitY = 0;
   private sitAmount = 0;
   private hoveredMarker: THREE.Sprite | null = null;
   private raycaster = new THREE.Raycaster();
-  private playerPosition = new THREE.Vector3(0, 0, 0);
+  // the player starts at the front of the office, facing the reception desk
+  private playerPosition = new THREE.Vector3(0, 0, 16.4);
   private playerVelocity = new THREE.Vector3();
   
   private characters: Map<string, THREE.Group> = new Map();
@@ -60,8 +67,8 @@ export class Game {
       0.1,
       1600
     );
-    this.camera.position.set(0, 6, 10);
-    this.camera.lookAt(0, 1.2, 0);
+    this.camera.position.set(0, 5.5, 23.5);
+    this.camera.lookAt(0, 1.3, 15.4);
 
     // Renderer setup
     // Draw into the page's existing canvas; a second canvas would land below the viewport
@@ -94,12 +101,15 @@ export class Game {
     const world = buildWorld(this.scene);
     this.colliders = world.colliders;
     this.seats = world.seats;
+    this.rooms = world.rooms;
+    this.walls = world.walls;
     this.createSeatMarkers();
 
     // Create player
     this.playerRig = createBird(PLAYER_COLORS);
     this.player = this.playerRig.group;
     this.player.position.copy(this.playerPosition);
+    this.player.rotation.y = Math.PI; // facing the receptionist
     this.scene.add(this.player);
 
     // Create NPCs
@@ -134,6 +144,8 @@ export class Game {
       mesh.userData.bobOffset = Math.random() * Math.PI * 2;
       mesh.userData.character = char;
       mesh.userData.rig = rig;
+      mesh.userData.sitting = !!char.sitting;
+      mesh.userData.room = roomAt(this.rooms, char.position[0], char.position[2]);
       
       this.scene.add(mesh);
       this.characters.set(char.id, mesh);
@@ -153,6 +165,7 @@ export class Game {
       const mesh = createWibbler();
       mesh.position.set(...item.position);
       mesh.userData.item = item;
+      mesh.userData.room = roomAt(this.rooms, item.position[0], item.position[2]);
       
       // Gentle rotation
       mesh.userData.rotationSpeed = 0.5 + Math.random() * 0.5;
@@ -205,6 +218,17 @@ export class Game {
         this.scene.remove(mesh);
       }
     }
+  }
+
+  /** Advance the in-game clock once per real second (paused on game over or while a choice is open). */
+  private updateClock(delta: number) {
+    // cap the step so a hidden tab doesn't fast-forward the day
+    this.clockAccumulator += Math.min(delta, 0.25);
+    if (this.clockAccumulator < 1) return;
+    this.clockAccumulator -= 1;
+    const state = this.engine.getState();
+    if (state.isGameOver || state.activeChoice) return;
+    this.engine.tickClock(GAME_HOURS_PER_REAL_SECOND);
   }
 
   private updatePlayer(delta: number) {
@@ -277,9 +301,12 @@ export class Game {
     this.sun.position.set(this.playerPosition.x + 14, 26, this.playerPosition.z + 10);
     this.sun.target.position.set(this.playerPosition.x, 0, this.playerPosition.z);
 
-    // Check nearby characters and items
+    // Rooms hide their contents until you're there; then check what you can reach
+    this.updateRooms();
     this.checkNearbyInteractables();
   }
+
+
 
 
   // ------------------------------------------------------------------ seats
@@ -319,7 +346,7 @@ export class Game {
     for (const marker of this.seatMarkers) {
       const seat = marker.userData.seat as Seat;
       const dist = Math.hypot(seat.x - this.playerPosition.x, seat.z - this.playerPosition.z);
-      marker.visible = !this.currentSeat && dist < range;
+      marker.visible = !this.currentSeat && dist < range && (seat.room ?? null) === (this.playerRoom?.id ?? null);
       if (!marker.visible) continue;
       (marker.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, (range - dist) / 1.5));
       const base = marker === this.hoveredMarker ? 0.66 : 0.5;
@@ -415,12 +442,57 @@ export class Game {
     }
   }
 
+  /** Things behind a wall can't be talked to or picked up from outside the room. */
+  private inPlayersRoom(mesh: THREE.Object3D): boolean {
+    const room = mesh.userData.room as Room | null;
+    return (room?.id ?? null) === (this.playerRoom?.id ?? null);
+  }
+
+  /**
+   * Rooms are closed boxes: their contents are only drawn when the player is at the
+   * door or inside, and the wall facing the camera is cut away while inside.
+   */
+  private updateRooms() {
+    const p = this.playerPosition;
+    this.playerRoom = roomAt(this.rooms, p.x, p.z);
+    const near = roomAt(this.rooms, p.x, p.z, 0.6);
+    for (const room of this.rooms) {
+      room.interior.visible = room === near;
+    }
+
+    // Walls: the one facing the camera goes while you're inside the room, and so does
+    // any wall that happens to sit between the camera and the player.
+    for (const wall of this.walls) wall.visible = true;
+    for (const room of this.rooms) {
+      for (const o of room.front) o.visible = room !== this.playerRoom;
+    }
+    const target = new THREE.Vector3(p.x, 1.2, p.z);
+    for (const lateral of [-0.7, 0, 0.7]) {
+      const aim = target.clone();
+      aim.x += lateral;
+      const dir = aim.sub(this.camera.position);
+      const dist = dir.length();
+      this.occlusionRay.set(this.camera.position, dir.normalize());
+      this.occlusionRay.far = Math.max(0, dist - 0.3);
+      for (const hit of this.occlusionRay.intersectObjects(this.walls, false)) hit.object.visible = false;
+    }
+    this.characters.forEach((mesh) => {
+      const room = mesh.userData.room as Room | null;
+      mesh.visible = !room || room === near;
+    });
+    this.itemMeshes.forEach((mesh) => {
+      const room = mesh.userData.room as Room | null;
+      mesh.visible = !room || room === near;
+    });
+  }
+
   private checkNearbyInteractables() {
     const interactionDistance = 2;
     let closestChar: Character | null = null;
     let closestDist = interactionDistance;
 
     this.characters.forEach((mesh, id) => {
+      if (!this.inPlayersRoom(mesh)) return;
       const dist = this.playerPosition.distanceTo(mesh.position);
       if (dist < closestDist) {
         closestChar = mesh.userData.character;
@@ -436,7 +508,7 @@ export class Game {
 
     this.itemMeshes.forEach((mesh, id) => {
       const item = mesh.userData.item;
-      if (!item.collected) {
+      if (!item.collected && this.inPlayersRoom(mesh)) {
         const dist = this.playerPosition.distanceTo(mesh.position);
         if (dist < closestItemDist) {
           closestItem = item;
@@ -451,7 +523,7 @@ export class Game {
   private updateNPCs(delta: number) {
     this.characters.forEach((mesh, id) => {
       const time = this.clock.elapsedTime + mesh.userData.bobOffset;
-      animateBird(mesh.userData.rig as BirdRig, time, 0);
+      animateBird(mesh.userData.rig as BirdRig, time, 0, mesh.userData.sitting ? 1 : 0);
 
       // Turn to face the player when they're close
       const dx = this.playerPosition.x - mesh.position.x;
@@ -513,6 +585,7 @@ export class Game {
     
     const delta = this.clock.getDelta();
     
+    this.updateClock(delta);
     this.updatePlayer(delta);
     this.updateSeatMarkers();
     this.updateNPCs(delta);

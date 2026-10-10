@@ -1,4 +1,5 @@
 import type { Character } from './types';
+import { formatClock } from './types';
 import { GameEngine } from './game-engine';
 import { getFirstMessage } from './characters';
 
@@ -240,7 +241,7 @@ export class VoiceClient {
 
     // Build context
     const context = [
-      `Day ${state.dayNumber}, ${Math.floor(state.dayTime)}:00`,
+      `Day ${state.dayNumber}, ${formatClock(state.dayTime)}`,
       `Stats: Energy ${state.stats.energy}, Reputation ${state.stats.reputation}, Performance ${state.stats.performance}, Burnout ${state.stats.burnout}`,
       `Level: ${state.level}`,
       state.inventory.length > 0 ? `Items: ${state.inventory.map(i => i.name).join(', ')}` : '',

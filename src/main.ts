@@ -1,4 +1,5 @@
 import { Game } from './game';
+import { formatClock } from './types';
 import './style.css';
 
 class App {
@@ -172,8 +173,7 @@ class App {
     // Update time
     if (this.timeElement) {
       this.timeElement.querySelector('.day')!.textContent = `Day ${state.dayNumber}`;
-      const hour = Math.floor(state.dayTime);
-      this.timeElement.querySelector('.time')!.textContent = `${hour}:00`;
+      this.timeElement.querySelector('.time')!.textContent = formatClock(state.dayTime);
       this.timeElement.querySelector('.level')!.textContent = state.level.charAt(0).toUpperCase() + state.level.slice(1);
     }
 
