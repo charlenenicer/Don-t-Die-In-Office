@@ -6,10 +6,11 @@ import type { Character, InventoryItem } from './types';
 import { GAME_HOURS_PER_REAL_SECOND } from './types';
 import { VoiceClient } from './voice-client';
 import {
-  FOG_COLOR, PLAYER_COLORS, animateBird, buildWorld, colorsForCharacter,
-  createBird, createSkyTexture, createWibbler, roomAt,
+  FOG_COLOR, buildWorld, createSkyTexture, createWibbler, roomAt,
 } from './visuals';
-import type { BirdRig, Collider, Room, Seat } from './visuals';
+import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
+import type { CharacterRig } from './people';
+import type { Collider, Room, Seat } from './visuals';
 
 export class Game {
   private scene: THREE.Scene;
@@ -19,7 +20,7 @@ export class Game {
   private voiceClient: VoiceClient;
   
   private player: THREE.Group;
-  private playerRig: BirdRig;
+  private playerRig: CharacterRig;
   private sun: THREE.DirectionalLight;
   private walkAmount = 0;
   private colliders: Collider[] = [];
@@ -106,7 +107,7 @@ export class Game {
     this.createSeatMarkers();
 
     // Create player
-    this.playerRig = createBird(PLAYER_COLORS);
+    this.playerRig = createCharacter(PLAYER_LOOK);
     this.player = this.playerRig.group;
     this.player.position.copy(this.playerPosition);
     this.player.rotation.y = Math.PI; // facing the receptionist
@@ -134,7 +135,7 @@ export class Game {
 
   private createNPCs() {
     CHARACTERS.forEach(char => {
-      const rig = createBird(colorsForCharacter(char.id));
+      const rig = createCharacter(lookForCharacter(char.id));
       const mesh = rig.group;
       mesh.position.set(...char.position);
       const [cx, , cz] = char.position;
@@ -285,7 +286,7 @@ export class Game {
     // Walk cycle eases in and out
     const target = direction.length() > 0 ? 1 : 0;
     this.walkAmount += (target - this.walkAmount) * Math.min(1, delta * 10);
-    animateBird(this.playerRig, this.clock.elapsedTime, this.walkAmount, this.sitAmount);
+    animateCharacter(this.playerRig, this.clock.elapsedTime, this.walkAmount, this.sitAmount);
 
     // Update camera to follow player (smoothed, low third-person)
     // Keep the camera inside the walls so it never ends up behind one
@@ -369,7 +370,7 @@ export class Game {
 
   private sitDown(seat: Seat) {
     this.currentSeat = seat;
-    this.lastSitY = seat.top - 0.66;
+    this.lastSitY = seat.top - HIP_HEIGHT;
     this.hoveredMarker = null;
     this.renderer.domElement.style.cursor = '';
     window.dispatchEvent(new Event('seat-change'));
@@ -524,7 +525,7 @@ export class Game {
   private updateNPCs(delta: number) {
     this.characters.forEach((mesh, id) => {
       const time = this.clock.elapsedTime + mesh.userData.bobOffset;
-      animateBird(mesh.userData.rig as BirdRig, time, 0, mesh.userData.sitting ? 1 : 0);
+      animateCharacter(mesh.userData.rig as CharacterRig, time, 0, mesh.userData.sitting ? 1 : 0);
 
       // Turn to face the player when they're close
       const dx = this.playerPosition.x - mesh.position.x;
@@ -556,7 +557,7 @@ export class Game {
       
       if (isNearby) {
         const vector = mesh.position.clone();
-        vector.y += 2.8;
+        vector.y += 2.4;
         vector.project(this.camera);
 
         const x = (vector.x * 0.5 + 0.5) * this.renderer.domElement.clientWidth;
