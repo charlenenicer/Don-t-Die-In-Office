@@ -284,8 +284,11 @@ function addPlant(world: THREE.Group, x: number, z: number, potColor: string) {
   ball(world, 0.3, '#237a36', x - 0.2, 1.5, z - 0.1);
 }
 
-/** A rolling office chair: five-star base with casters, gas lift, cushion, curved back, arms. */
-function officeChair(parent: THREE.Object3D, x: number, z: number, color: string, seatH: number, yaw: number) {
+/**
+ * A rolling office chair: five-star base with casters, gas lift, cushion, curved back, arms.
+ * Returns the swivel (seat, back and arms), which turns on the fixed base.
+ */
+function officeChair(parent: THREE.Object3D, x: number, z: number, color: string, seatH: number, yaw: number): THREE.Group {
   const g = new THREE.Group();
   g.position.set(x, 0, z);
   g.rotation.y = yaw; // faces +z before rotation
@@ -303,21 +306,23 @@ function officeChair(parent: THREE.Object3D, x: number, z: number, color: string
   }
   cyl(g, 0.07, 0.09, 0.07, dark, 0, 0.13, 0, 16);       // hub
   cyl(g, 0.035, 0.035, seatH - 0.2, '#9aa0a8', 0, (seatH + 0.0) / 2 + 0.03, 0, 12); // gas lift
-  box(g, 0.34, 0.04, 0.34, dark, 0, seatH - 0.06, 0);    // seat plate
+  const swivel = new THREE.Group();
+  g.add(swivel);
+  box(swivel, 0.34, 0.04, 0.34, dark, 0, seatH - 0.06, 0);    // seat plate
 
   // cushioned seat and curved backrest
-  ball(g, 0.27, color, 0, seatH - 0.01, 0.0, 1, 0.22, 1);
-  const back = ball(g, 0.27, color, 0, seatH + 0.4, -0.24, 1, 1.15, 0.2);
+  ball(swivel, 0.27, color, 0, seatH - 0.01, 0.0, 1, 0.22, 1);
+  const back = ball(swivel, 0.27, color, 0, seatH + 0.4, -0.24, 1, 1.15, 0.2);
   back.rotation.x = -0.12;
-  box(g, 0.07, 0.34, 0.05, dark, 0, seatH + 0.12, -0.2).rotation.x = -0.12; // back support
+  box(swivel, 0.07, 0.34, 0.05, dark, 0, seatH + 0.12, -0.2).rotation.x = -0.12; // back support
 
   // armrests
   for (const side of [-1, 1]) {
-    box(g, 0.04, 0.2, 0.04, dark, side * 0.3, seatH + 0.1, -0.02);
-    box(g, 0.07, 0.035, 0.3, dark, side * 0.3, seatH + 0.21, -0.04);
+    box(swivel, 0.04, 0.2, 0.04, dark, side * 0.3, seatH + 0.1, -0.02);
+    box(swivel, 0.07, 0.035, 0.3, dark, side * 0.3, seatH + 0.21, -0.04);
   }
   parent.add(g);
-  return g;
+  return swivel;
 }
 
 /** A football match on the lounge TV. */
@@ -430,6 +435,8 @@ export interface Seat {
   yaw: number;
   /** id of the room the seat is in, or null in the open office (filled in by buildWorld) */
   room?: string | null;
+  /** the turning part of a swivel office chair; seats without one can't spin */
+  swivel?: THREE.Object3D;
 }
 
 /** A walled room. Its furniture lives in `interior`, shown only when the player is at or inside it. */
@@ -814,13 +821,14 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     box(world, 0.5, 0.03, 0.2, '#d8d8d8', x, 0.86, z + 0.35 * faceZ);
   };
   const stool = (x: number, z: number, color: string, h = 0.5, yaw = 0, back = false) => {
+    let swivel: THREE.Object3D | undefined;
     if (back) {
-      officeChair(world, x, z, color, h, yaw);
+      swivel = officeChair(world, x, z, color, h, yaw);
     } else {
       cyl(world, 0.26, 0.26, 0.1, color, x, h, z, 20);
       cyl(world, 0.05, 0.05, h - 0.05, '#444', x, (h - 0.05) / 2, z, 10);
     }
-    seats.push({ x, z, top: h + 0.05, yaw });
+    seats.push({ x, z, top: h + 0.05, yaw, swivel });
   };
   /** A row of desks pushed side by side, each with a computer and a chair. */
   const deskRow = (z: number, count: number, chairColors: string[]) => {

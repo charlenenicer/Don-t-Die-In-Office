@@ -33,6 +33,9 @@ export class Game {
   private currentSeat: Seat | null = null;
   private lastSitY = 0;
   private sitAmount = 0;
+  // office-chair spin: angle relative to the seat's facing, and its speed (rad/s)
+  private spinAngle = 0;
+  private spinSpeed = 0;
   private hoveredMarker: THREE.Sprite | null = null;
   private raycaster = new THREE.Raycaster();
   // the player starts at the front of the office, facing the reception desk
@@ -193,6 +196,12 @@ export class Game {
       if (e.key.toLowerCase() === 'e') {
         this.interact();
       }
+
+      // Space on an office chair gives it a push; each tap spins it faster
+      if (e.key === ' ' && this.canSpin()) {
+        e.preventDefault();
+        if (!e.repeat) this.spinSpeed = Math.min(this.spinSpeed + 9, 30);
+      }
     });
 
     window.addEventListener('keyup', (e) => {
@@ -248,9 +257,13 @@ export class Game {
         const k = Math.min(1, delta * 9);
         this.playerPosition.x += (this.currentSeat.x - this.playerPosition.x) * k;
         this.playerPosition.z += (this.currentSeat.z - this.playerPosition.z) * k;
-        let turn = this.currentSeat.yaw - this.player.rotation.y;
-        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-        this.player.rotation.y += turn * k;
+        if (this.updateSpin(delta)) {
+          this.player.rotation.y = this.currentSeat.yaw + this.spinAngle;
+        } else {
+          let turn = this.currentSeat.yaw + this.spinAngle - this.player.rotation.y;
+          turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+          this.player.rotation.y += turn * k;
+        }
       }
     }
 
@@ -403,12 +416,41 @@ export class Game {
       }
     }
     this.playerPosition.set(spot[0], 0, spot[1]);
+    // leave the chair facing its desk again
+    this.spinSpeed = 0;
+    this.spinAngle = 0;
+    if (seat.swivel) seat.swivel.rotation.y = 0;
     this.currentSeat = null;
     window.dispatchEvent(new Event('seat-change'));
   }
 
   isSitting(): boolean {
     return this.currentSeat !== null;
+  }
+
+  /** Sitting on a swivel office chair (not a stool, sofa or dining chair). */
+  canSpin(): boolean {
+    return !!this.currentSeat?.swivel;
+  }
+
+  /**
+   * Turn the chair by its spin speed, slowing with friction; once it has nearly
+   * stopped it eases back round to face the desk. Returns true while spinning freely.
+   */
+  private updateSpin(delta: number): boolean {
+    const swivel = this.currentSeat?.swivel;
+    if (!swivel) return false;
+    const spinning = this.spinSpeed > 1.5;
+    if (spinning) {
+      this.spinAngle += this.spinSpeed * delta;
+      this.spinSpeed *= Math.exp(-0.9 * delta);
+    } else {
+      this.spinSpeed = 0;
+      const rest = Math.atan2(Math.sin(this.spinAngle), Math.cos(this.spinAngle));
+      this.spinAngle = rest * (1 - Math.min(1, delta * 4));
+    }
+    swivel.rotation.y = this.spinAngle;
+    return spinning;
   }
 
   hasSeatNearby(): boolean {
