@@ -15,6 +15,8 @@ export interface Character {
   color: string;
   description: string;
   wasPromoted?: boolean;
+  /** sits in a chair at their post instead of standing */
+  sitting?: boolean;
 }
 
 export interface InventoryItem {
@@ -86,3 +88,16 @@ export const WORK_HOURS = {
   start: 9,
   end: 18,
 };
+
+/** One in-game day (9:00 to 18:00) takes this many real minutes. */
+export const REAL_MINUTES_PER_DAY = 30;
+export const GAME_HOURS_PER_REAL_SECOND =
+  (WORK_HOURS.end - WORK_HOURS.start) / (REAL_MINUTES_PER_DAY * 60);
+
+/** Format an in-game time (fractional hours) as H:MM. */
+export function formatClock(dayTime: number): string {
+  const totalMinutes = Math.floor(dayTime * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}:${m.toString().padStart(2, '0')}`;
+}

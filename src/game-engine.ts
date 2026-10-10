@@ -88,17 +88,34 @@ export class GameEngine {
 
     // New day
     if (this.state.dayTime >= 24) {
-      this.state.dayTime = WORK_HOURS.start;
-      this.state.dayNumber++;
-      
-      // Morning energy recovery
-      this.updateStats({ energy: 20 });
-
-      // Process pending delayed effects
-      this.processPendingEffects();
+      this.startNewDay();
     }
 
     this.notify();
+  }
+
+  /**
+   * Real-time clock tick. Moves the clock forward and, when the workday ends
+   * at the end of WORK_HOURS, rolls over to the next morning.
+   */
+  tickClock(hours: number) {
+    if (this.state.isGameOver) return;
+    this.state.dayTime += hours;
+    if (this.state.dayTime >= WORK_HOURS.end) {
+      this.startNewDay();
+    }
+    this.notify();
+  }
+
+  private startNewDay() {
+    this.state.dayTime = WORK_HOURS.start;
+    this.state.dayNumber++;
+
+    // Morning energy recovery
+    this.updateStats({ energy: 20 });
+
+    // Process pending delayed effects
+    this.processPendingEffects();
   }
 
   private processPendingEffects() {

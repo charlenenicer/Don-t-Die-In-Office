@@ -33,13 +33,29 @@ body {
 
 .hud {
   position: absolute;
-  top: 20px;
-  left: 20px;
-  right: 20px;
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
+  inset: 0;
   pointer-events: none;
+}
+
+/* Clock top center, stats bottom left, inventory bottom right */
+.time-panel {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.stats-panel {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  min-width: 270px;
+}
+
+.inventory-panel {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
 }
 
 .stats-panel, .time-panel, .inventory-panel {

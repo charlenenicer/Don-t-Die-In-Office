@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GameEngine } from '../src/game-engine';
 import type { Choice } from '../src/types';
+import { GAME_HOURS_PER_REAL_SECOND, REAL_MINUTES_PER_DAY, formatClock } from '../src/types';
 
 describe('GameEngine', () => {
   let engine: GameEngine;
@@ -88,6 +89,47 @@ describe('GameEngine', () => {
       
       const state = engine.getState();
       expect(state.stats.reputation).toBe(45);
+    });
+  });
+
+  describe('Real-time clock', () => {
+    it('should make one day last 30 real minutes', () => {
+      expect(REAL_MINUTES_PER_DAY).toBe(30);
+      engine.tickClock(GAME_HOURS_PER_REAL_SECOND * 60 * 15);
+      expect(engine.getState().dayTime).toBeCloseTo(9 + 4.5, 5);
+
+      // another 15 minutes finishes the day and starts day 2
+      engine.tickClock(GAME_HOURS_PER_REAL_SECOND * 60 * 15);
+      const state = engine.getState();
+      expect(state.dayNumber).toBe(2);
+      expect(state.dayTime).toBe(9);
+    });
+
+    it('should advance the clock on every tick', () => {
+      const before = engine.getState().dayTime;
+      engine.tickClock(GAME_HOURS_PER_REAL_SECOND);
+      expect(engine.getState().dayTime).toBeGreaterThan(before);
+    });
+
+    it('should recover energy when the day rolls over', () => {
+      engine.updateStats({ energy: -40 });
+      engine.tickClock(9);
+      const state = engine.getState();
+      expect(state.dayNumber).toBe(2);
+      expect(state.stats.energy).toBe(60);
+    });
+
+    it('should not tick after game over', () => {
+      engine.updateStats({ burnout: 100 });
+      const before = engine.getState().dayTime;
+      engine.tickClock(1);
+      expect(engine.getState().dayTime).toBe(before);
+    });
+
+    it('should format the clock with minutes', () => {
+      expect(formatClock(9)).toBe('9:00');
+      expect(formatClock(13.5)).toBe('13:30');
+      expect(formatClock(9 + 5 / 60)).toBe('9:05');
     });
   });
 
