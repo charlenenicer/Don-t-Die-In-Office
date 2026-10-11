@@ -10,7 +10,10 @@ import {
 } from './visuals';
 import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
 import type { CharacterRig } from './people';
-import type { Collider, Room, Seat } from './visuals';
+import type { ActivitySpot, Collider, Room, Seat } from './visuals';
+import {
+  ACTIVITY_RULES, COOLDOWN_HOURS, absoluteHours, cooldownMinutesLeft, describeEffects,
+} from './activities';
 
 export class Game {
   private scene: THREE.Scene;
@@ -30,10 +33,16 @@ export class Game {
   private walls: THREE.Object3D[] = [];
   private occlusionRay = new THREE.Raycaster();
   private playerRoom: Room | null = null;
-  private seatMarkers: THREE.Sprite[] = [];
+  private markers: THREE.Sprite[] = [];
+  private activities: ActivitySpot[] = [];
+  /** the fun-zone activity in progress, if any */
+  private activity: { spot: ActivitySpot; elapsed: number } | null = null;
+  /** absolute game hour at which each activity can be done again */
+  private activityReadyAt = new Map<string, number>();
   private currentSeat: Seat | null = null;
   private lastSitY = 0;
   private sitAmount = 0;
+  private reachAmount = 0;
   private hoveredMarker: THREE.Sprite | null = null;
   private raycaster = new THREE.Raycaster();
   // the player starts at the front of the office, facing the reception desk
@@ -104,6 +113,7 @@ export class Game {
     this.seats = world.seats;
     this.rooms = world.rooms;
     this.walls = world.walls;
+    this.activities = world.activities;
     this.createSeatMarkers();
 
     // Create player
@@ -185,7 +195,8 @@ export class Game {
     dom.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const marker = this.pickMarker(e);
-      if (marker) this.sitDown(marker.userData.seat as Seat);
+      if (marker?.userData.seat) this.sitDown(marker.userData.seat as Seat);
+      else if (marker?.userData.activity) this.startActivity(marker.userData.activity as ActivitySpot);
     });
 
     window.addEventListener('keydown', (e) => {
@@ -241,6 +252,22 @@ export class Game {
     if (this.keys.has('a') || this.keys.has('arrowleft')) direction.x -= 1;
     if (this.keys.has('d') || this.keys.has('arrowright')) direction.x += 1;
 
+    if (this.activity) {
+      if (direction.length() > 0) {
+        this.stopActivity(); // walking away ends it early, with no reward
+      } else {
+        const { spot } = this.activity;
+        const k = Math.min(1, delta * 9);
+        this.playerPosition.x += (spot.stand.x - this.playerPosition.x) * k;
+        this.playerPosition.z += (spot.stand.z - this.playerPosition.z) * k;
+        let turn = spot.stand.yaw - this.player.rotation.y;
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        this.player.rotation.y += turn * k;
+        this.activity.elapsed += delta;
+        if (this.activity.elapsed >= ACTIVITY_RULES[spot.id].duration) this.finishActivity();
+      }
+    }
+
     if (this.currentSeat) {
       if (direction.length() > 0) {
         this.standUp();
@@ -286,7 +313,15 @@ export class Game {
     // Walk cycle eases in and out
     const target = direction.length() > 0 ? 1 : 0;
     this.walkAmount += (target - this.walkAmount) * Math.min(1, delta * 10);
-    animateCharacter(this.playerRig, this.clock.elapsedTime, this.walkAmount, this.sitAmount);
+    this.reachAmount += ((this.activity ? 1 : 0) - this.reachAmount) * Math.min(1, delta * 8);
+    animateCharacter(this.playerRig, this.clock.elapsedTime, this.walkAmount, this.sitAmount, this.reachAmount);
+
+    // fun-zone props: the one being played animates, the rest settle back
+    const hand = this.handPosition();
+    for (const spot of this.activities) {
+      const active = this.activity?.spot === spot;
+      spot.animate(active ? this.activity!.elapsed : 0, active, hand);
+    }
 
     // Update camera to follow player (smoothed, low third-person)
     // Keep the camera inside the walls so it never ends up behind one
@@ -313,7 +348,7 @@ export class Game {
 
   // ------------------------------------------------------------------ seats
 
-  /** Small white circles hovering over every seat; click one to sit. */
+  /** Small white circles over every seat and fun-zone activity; click one to sit or play. */
   private createSeatMarkers() {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 128;
@@ -338,23 +373,41 @@ export class Game {
       marker.visible = false;
       marker.userData.seat = seat;
       this.scene.add(marker);
-      this.seatMarkers.push(marker);
+      this.markers.push(marker);
+    }
+    for (const spot of this.activities) {
+      const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false, fog: false });
+      const marker = new THREE.Sprite(material);
+      marker.position.copy(spot.marker);
+      marker.scale.setScalar(0.5);
+      marker.renderOrder = 20;
+      marker.visible = false;
+      marker.userData.activity = spot;
+      this.scene.add(marker);
+      this.markers.push(marker);
     }
   }
 
   private updateSeatMarkers() {
     const t = this.clock.elapsedTime;
     const range = 6.5;
-    for (const marker of this.seatMarkers) {
-      const seat = marker.userData.seat as Seat;
-      const dist = Math.hypot(seat.x - this.playerPosition.x, seat.z - this.playerPosition.z);
-      marker.visible = !this.currentSeat && dist < range && (seat.room ?? null) === (this.playerRoom?.id ?? null);
+    const busy = !!this.currentSeat || !!this.activity;
+    for (const marker of this.markers) {
+      const seat = marker.userData.seat as Seat | undefined;
+      const spot = marker.userData.activity as ActivitySpot | undefined;
+      const x = seat ? seat.x : spot!.marker.x;
+      const z = seat ? seat.z : spot!.marker.z;
+      const room = seat ? seat.room ?? null : null; // the fun zone is open-plan
+      const dist = Math.hypot(x - this.playerPosition.x, z - this.playerPosition.z);
+      marker.visible = !busy && dist < range && room === (this.playerRoom?.id ?? null);
       if (!marker.visible) continue;
-      (marker.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, (range - dist) / 1.5));
+      // activities on cooldown show a faded circle
+      const resting = spot && this.activityMinutesLeft(spot) > 0 ? 0.35 : 1;
+      (marker.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, (range - dist) / 1.5)) * resting;
       const base = marker === this.hoveredMarker ? 0.66 : 0.5;
-      marker.scale.setScalar(base * (1 + Math.sin(t * 3 + seat.x) * 0.06));
+      marker.scale.setScalar(base * (1 + Math.sin(t * 3 + x) * 0.06));
     }
-    if (this.currentSeat) this.hoveredMarker = null;
+    if (busy) this.hoveredMarker = null;
   }
 
   private pickMarker(e: PointerEvent): THREE.Sprite | null {
@@ -364,7 +417,7 @@ export class Game {
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.seatMarkers.filter((m) => m.visible), false);
+    const hits = this.raycaster.intersectObjects(this.markers.filter((m) => m.visible), false);
     return (hits[0]?.object as THREE.Sprite | undefined) ?? null;
   }
 
@@ -413,8 +466,79 @@ export class Game {
     return this.currentSeat !== null;
   }
 
-  hasSeatNearby(): boolean {
-    return this.seatMarkers.some((m) => m.visible);
+  // --------------------------------------------------------------- activities
+
+  private activityMinutesLeft(spot: ActivitySpot): number {
+    const state = this.engine.getState();
+    return cooldownMinutesLeft(this.activityReadyAt.get(spot.id), absoluteHours(state.dayNumber, state.dayTime));
+  }
+
+  private startActivity(spot: ActivitySpot) {
+    const rule = ACTIVITY_RULES[spot.id];
+    const wait = this.activityMinutesLeft(spot);
+    if (wait > 0) {
+      this.toast(`${rule.title}: come back in ${wait} min`);
+      return;
+    }
+    this.activity = { spot, elapsed: 0 };
+    spot.start?.();
+    this.hoveredMarker = null;
+    this.renderer.domElement.style.cursor = '';
+    window.dispatchEvent(new Event('seat-change'));
+  }
+
+  private finishActivity() {
+    if (!this.activity) return;
+    const { spot } = this.activity;
+    const rule = ACTIVITY_RULES[spot.id];
+    const extra = spot.result?.();
+    this.activity = null;
+    this.engine.updateStats(rule.effects);
+    this.engine.tickClock(rule.hours);
+    const state = this.engine.getState();
+    this.activityReadyAt.set(spot.id, absoluteHours(state.dayNumber, state.dayTime) + COOLDOWN_HOURS);
+    this.toast(`${rule.title}${extra ? ` — ${extra}` : ''}\n${describeEffects(rule.effects, rule.hours)}`);
+    window.dispatchEvent(new Event('seat-change'));
+  }
+
+  private stopActivity() {
+    this.activity = null;
+    window.dispatchEvent(new Event('seat-change'));
+  }
+
+  /** Roughly where the player's right hand is, for props they hold. */
+  private handPosition(): THREE.Vector3 {
+    const yaw = this.player.rotation.y;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    return new THREE.Vector3(
+      this.playerPosition.x + fx * 0.42 - fz * 0.2,
+      1.05,
+      this.playerPosition.z + fz * 0.42 + fx * 0.2,
+    );
+  }
+
+  private toast(text: string) {
+    window.dispatchEvent(new CustomEvent('toast', { detail: text }));
+  }
+
+  /** What the player is doing right now, for the hint bar. */
+  getActivityAction(): string | null {
+    return this.activity ? ACTIVITY_RULES[this.activity.spot.id].action : null;
+  }
+
+  /** What clicking the nearest visible circle would do ("sit", "play ping-pong"…). */
+  getNearestMarkerAction(): string | null {
+    let best: THREE.Sprite | null = null;
+    let bestDist = Infinity;
+    for (const m of this.markers) {
+      if (!m.visible) continue;
+      const d = Math.hypot(m.position.x - this.playerPosition.x, m.position.z - this.playerPosition.z);
+      if (d < bestDist) { best = m; bestDist = d; }
+    }
+    if (!best) return null;
+    const spot = best.userData.activity as ActivitySpot | undefined;
+    return spot ? ACTIVITY_RULES[spot.id].action : 'sit';
   }
 
   /** Push the player out of walls and furniture (circle vs. box). */
@@ -585,7 +709,8 @@ export class Game {
   private animate = () => {
     requestAnimationFrame(this.animate);
     
-    const delta = this.clock.getDelta();
+    // cap the step: the first frame (or one after a hidden tab) can be seconds long
+    const delta = Math.min(this.clock.getDelta(), 0.1);
     
     this.updateClock(delta);
     this.updatePlayer(delta);

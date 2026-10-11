@@ -129,6 +129,9 @@ class App {
     // Setup event listeners
     this.setupEventListeners();
 
+    // Short messages, e.g. what a fun-zone activity did to your stats
+    window.addEventListener('toast', (event: Event) => this.showToast((event as CustomEvent<string>).detail));
+
     // Keep the hint current as the player moves around and sits
     window.addEventListener('seat-change', () => this.refreshHint());
     setInterval(() => this.refreshHint(), 150);
@@ -204,20 +207,38 @@ class App {
     }
   }
 
+  private showToast(text: string) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    for (const [i, line] of text.split('\n').entries()) {
+      const row = document.createElement('div');
+      row.className = i === 0 ? 'toast-title' : 'toast-detail';
+      row.textContent = line;
+      el.appendChild(row);
+    }
+    document.querySelector('.game-container')?.appendChild(el);
+    setTimeout(() => el.classList.add('leaving'), 3200);
+    setTimeout(() => el.remove(), 3700);
+  }
+
   private refreshHint() {
     if (!this.hintElement || !this.game) return;
     const nearbyChar = this.game.getNearbyCharacter();
     const nearbyItem = this.game.getNearbyItem();
 
     let text = 'WASD/Arrows to move • E to interact';
-    if (this.game.isSitting()) {
+    const playing = this.game.getActivityAction();
+    const nearbyAction = this.game.getNearestMarkerAction();
+    if (playing) {
+      text = `${playing.charAt(0).toUpperCase()}${playing.slice(1)}… • WASD to stop`;
+    } else if (this.game.isSitting()) {
       text = 'Seated • press WASD / arrows to stand up';
     } else if (nearbyChar) {
       text = `Press E to talk to ${nearbyChar.name}`;
     } else if (nearbyItem && !nearbyItem.collected) {
       text = `Press E to collect ${nearbyItem.name}`;
-    } else if (this.game.hasSeatNearby()) {
-      text = 'Click a white circle to sit • WASD to move';
+    } else if (nearbyAction) {
+      text = `Click the white circle to ${nearbyAction} • WASD to move`;
     }
     if (this.hintElement.textContent !== text) this.hintElement.textContent = text;
   }

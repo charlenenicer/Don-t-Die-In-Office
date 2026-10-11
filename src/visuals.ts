@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { dartPoints } from './activities';
 
 // Look inspired by Big Walk (House House): chunky round characters with
 // mismatched saturated parts, bold flat-colored architecture, a naturalistic
@@ -374,7 +375,7 @@ function tvTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-/** Table football: wooden box, green pitch, eight rods with little players and handles. */
+/** Table football: wooden box, green pitch, eight spinning rods with players, and a ball. */
 function foosball(parent: THREE.Object3D, x: number, z: number) {
   const wood = '#8a5f35';
   box(parent, 1.7, 0.3, 0.95, wood, x, 0.82, z);
@@ -382,23 +383,29 @@ function foosball(parent: THREE.Object3D, x: number, z: number) {
   box(parent, 0.02, 0.022, 0.85, '#ffffff', x, 0.962, z);
   for (const dx of [-0.75, 0.75]) for (const dz of [-0.4, 0.4]) box(parent, 0.1, 0.68, 0.1, wood, x + dx, 0.34, z + dz);
   for (const dx of [-0.86, 0.86]) box(parent, 0.04, 0.12, 0.3, '#f2f2f2', x + dx, 0.9, z); // goals
+  const rods: THREE.Group[] = [];
   const rodXs = [-0.68, -0.48, -0.25, -0.08, 0.08, 0.25, 0.48, 0.68];
   rodXs.forEach((rx, i) => {
+    // each rod is a group along z, so turning it spins the little players around the rod
+    const g = new THREE.Group();
+    g.position.set(x + rx, 1.04, z);
     const team = i % 2 === 0 ? '#e0452f' : '#2f6fdb';
-    const rod = cyl(parent, 0.012, 0.012, 1.5, '#cfd3d8', x + rx, 1.04, z, 8);
-    rod.rotation.x = Math.PI / 2;
+    cyl(g, 0.012, 0.012, 1.5, '#cfd3d8', 0, 0, 0, 8).rotation.x = Math.PI / 2;
     const handleSide = i % 2 === 0 ? -1 : 1;
-    const handle = cyl(parent, 0.035, 0.035, 0.16, '#1b1c20', x + rx, 1.04, z + handleSide * 0.82, 10);
-    handle.rotation.x = Math.PI / 2;
+    cyl(g, 0.035, 0.035, 0.16, '#1b1c20', 0, 0, handleSide * 0.82, 10).rotation.x = Math.PI / 2;
     const count = [1, 2, 3, 5][Math.min(3, Math.floor(Math.abs(rx) * 4))] ?? 3;
     for (let p = 0; p < count; p++) {
       const pz = (p - (count - 1) / 2) * (0.7 / Math.max(1, count));
-      box(parent, 0.05, 0.14, 0.05, team, x + rx, 1.0, z + pz);
+      box(g, 0.05, 0.14, 0.05, team, 0, -0.04, pz);
     }
+    parent.add(g);
+    rods.push(g);
   });
+  const puck = ball(parent, 0.035, '#ffffff', x, 0.985, z);
+  return { rods, puck };
 }
 
-/** A ping-pong table with net and two paddles. */
+/** A ping-pong table with net, two paddles and a ball. */
 function pingPong(parent: THREE.Object3D, x: number, z: number) {
   box(parent, 2.74, 0.05, 1.52, '#1f6f4a', x, 0.76, z);
   box(parent, 2.74, 0.052, 0.02, '#ffffff', x, 0.761, z);                   // centre line
@@ -406,9 +413,10 @@ function pingPong(parent: THREE.Object3D, x: number, z: number) {
   box(parent, 0.02, 0.052, 1.52, '#ffffff', x - 1.36, 0.761, z);
   box(parent, 0.03, 0.15, 1.7, '#f2f2f2', x, 0.86, z);                       // net
   for (const dx of [-1.2, 1.2]) for (const dz of [-0.6, 0.6]) box(parent, 0.06, 0.73, 0.06, '#26292f', x + dx, 0.37, z + dz);
-  cyl(parent, 0.08, 0.08, 0.02, '#e0452f', x - 0.9, 0.8, z + 0.3, 16);
+  const paddle = cyl(parent, 0.08, 0.08, 0.02, '#e0452f', x - 0.9, 0.8, z + 0.3, 16);
   cyl(parent, 0.08, 0.08, 0.02, '#2f6fdb', x + 0.9, 0.8, z - 0.3, 16);
-  ball(parent, 0.025, '#f08a1c', x + 0.4, 0.82, z + 0.1);
+  const pongBall = ball(parent, 0.025, '#f08a1c', x + 0.4, 0.82, z + 0.1);
+  return { paddle, pongBall };
 }
 
 /** A four-legged dining chair with a slatted back. Faces +z before `yaw` is applied. */
@@ -461,12 +469,31 @@ export function roomAt(rooms: Room[], x: number, z: number, margin = 0): Room | 
   return rooms.find((r) => x >= r.minX - margin && x <= r.maxX + margin && z >= r.minZ - margin && z <= r.maxZ + margin) ?? null;
 }
 
+/**
+ * Something in the fun zone the player can do. The game owns the rules (see
+ * activities.ts); the world owns where it is and how its props move.
+ */
+export interface ActivitySpot {
+  id: 'foosball' | 'pingpong' | 'darts' | 'snacks' | 'drinks';
+  /** where the white circle floats */
+  marker: THREE.Vector3;
+  /** where the player stands and which way they face */
+  stand: { x: number; z: number; yaw: number };
+  /** reset props when the activity starts */
+  start?: () => void;
+  /** move the props: seconds since start, whether it's running, the player's hand */
+  animate: (elapsed: number, active: boolean, hand: THREE.Vector3) => void;
+  /** extra line for the result toast, e.g. the darts score */
+  result?: () => string;
+}
+
 export interface WorldData {
   colliders: Collider[];
   seats: Seat[];
   rooms: Room[];
   /** every partition wall piece, so the game can cut away any that block the camera */
   walls: THREE.Object3D[];
+  activities: ActivitySpot[];
 }
 
 const WALL_H = 8;
@@ -625,6 +652,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   const rand = mulberry32(42);
   const colliders: Collider[] = [];
   const seats: Seat[] = [];
+  const activities: ActivitySpot[] = [];
   const solid = (x: number, z: number, w: number, d: number) => {
     colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
   };
@@ -990,15 +1018,98 @@ export function buildWorld(scene: THREE.Scene): WorldData {
 
   // ---- fun zone on the right: table football, ping-pong, darts, drinks, snack bar ------
   tiledFloor(world, 11, 17.4, 19.1, 11.9, '#f7c58c');
-  foosball(world, 17.6, 9.8);
-  pingPong(world, 18.5, 5.6);
-  // dartboard on the outside of the copy room wall
-  const dart = cyl(world, 0.42, 0.42, 0.05, '#1b1c20', 13.6, 1.75, 3.17, 32);
-  dart.rotation.x = Math.PI / 2;
+  // table football: rods spin and the ball zips around while you play
+  const foos = foosball(world, 17.6, 9.8);
+  activities.push({
+    id: 'foosball',
+    marker: new THREE.Vector3(17.6, 1.55, 9.8),
+    stand: { x: 17.6, z: 11.0, yaw: Math.PI },
+    animate: (e, active) => {
+      foos.rods.forEach((rod, i) => {
+        const target = active ? Math.sin(e * 7 + i * 1.3) * 0.8 : 0;
+        rod.rotation.z += (target - rod.rotation.z) * 0.25;
+      });
+      if (active) foos.puck.position.set(17.6 + Math.sin(e * 2.6) * 0.65, 0.985, 9.8 + Math.sin(e * 4.1) * 0.3);
+      else foos.puck.position.set(17.6, 0.985, 9.8);
+    },
+  });
+
+  // ping-pong: the red paddle moves to your hand and the ball rallies end to end
+  const pong = pingPong(world, 18.5, 5.6);
+  const paddleHome = pong.paddle.position.clone();
+  activities.push({
+    id: 'pingpong',
+    marker: new THREE.Vector3(18.5, 1.45, 5.6),
+    stand: { x: 16.7, z: 5.6, yaw: Math.PI / 2 },
+    animate: (e, active, hand) => {
+      if (!active) {
+        pong.paddle.position.copy(paddleHome);
+        pong.paddle.rotation.set(0, 0, 0);
+        pong.pongBall.position.set(18.9, 0.82, 5.7);
+        return;
+      }
+      pong.paddle.position.copy(hand);
+      pong.paddle.rotation.set(0, 0, Math.PI / 2 + Math.sin(e * 6) * 0.3);
+      const phase = (e * 1.1) % 2;
+      const u = phase < 1 ? phase : 2 - phase;                              // 0 = your end, 1 = far end
+      pong.pongBall.position.set(18.5 - 1.25 + u * 2.5, 0.8 + Math.abs(Math.sin(u * Math.PI * 2)) * 0.32, 5.6 + Math.sin(e * 1.7) * 0.4);
+    },
+  });
+
+  // darts: three throws that stick in the board and get scored
+  const board = new THREE.Vector3(13.6, 1.75, 3.2);
+  const dartboard = cyl(world, 0.42, 0.42, 0.05, '#1b1c20', board.x, board.y, 3.17, 32);
+  dartboard.rotation.x = Math.PI / 2;
   for (const [r, c] of [[0.36, '#e8e2cf'], [0.26, '#2f9e4f'], [0.17, '#e8e2cf'], [0.07, '#e0452f']] as [number, string][]) {
-    const ring = cyl(world, r, r, 0.02, c, 13.6, 1.75, 3.2 + (0.42 - r) * 0.02, 32);
+    const ring = cyl(world, r, r, 0.02, c, board.x, board.y, 3.2 + (0.42 - r) * 0.02, 32);
     ring.rotation.x = Math.PI / 2;
   }
+  const darts: THREE.Group[] = [];
+  const dartTargets: THREE.Vector3[] = [];
+  for (let i = 0; i < 3; i++) {
+    const d = new THREE.Group();
+    cyl(d, 0.012, 0.006, 0.16, '#cfd3d8', 0, 0, 0, 6).rotation.x = Math.PI / 2;     // barrel along z
+    box(d, 0.07, 0.002, 0.05, ['#e0452f', '#2f6fdb', '#f2c230'][i], 0, 0, 0.09);   // flights
+    box(d, 0.002, 0.07, 0.05, ['#e0452f', '#2f6fdb', '#f2c230'][i], 0, 0, 0.09);
+    d.visible = false;
+    world.add(d);
+    darts.push(d);
+  }
+  activities.push({
+    id: 'darts',
+    marker: new THREE.Vector3(13.6, 2.45, 3.6),
+    stand: { x: 13.6, z: 6.4, yaw: Math.PI },
+    start: () => {
+      dartTargets.length = 0;
+      for (let i = 0; i < 3; i++) {
+        // aim for the bull: closer throws are more likely
+        const r = Math.pow(Math.random(), 0.8) * 0.4;
+        const a = Math.random() * Math.PI * 2;
+        dartTargets.push(new THREE.Vector3(board.x + Math.cos(a) * r, board.y + Math.sin(a) * r, board.z + 0.1));
+      }
+      darts.forEach((d) => { d.visible = false; });
+    },
+    animate: (e, active, hand) => {
+      if (!active) return; // darts stay stuck in the board until the next game
+      darts.forEach((d, i) => {
+        const throwAt = 0.5 + i * 1.0;
+        const target = dartTargets[i];
+        if (!target) return;
+        if (e < throwAt - 0.5) { d.visible = false; return; }
+        d.visible = true;
+        if (e < throwAt) { d.position.copy(hand); d.lookAt(target); d.rotateY(Math.PI); return; }
+        const u = Math.min(1, (e - throwAt) / 0.35);
+        d.position.lerpVectors(hand, target, u);
+        d.position.y += Math.sin(u * Math.PI) * 0.25;
+        d.lookAt(target);
+        d.rotateY(Math.PI); // flights point back toward the thrower
+      });
+    },
+    result: () => {
+      const pts = dartTargets.map((t) => dartPoints(Math.hypot(t.x - board.x, t.y - board.y)));
+      return `${pts.join(' + ')} = ${pts.reduce((a, b) => a + b, 0)} points`;
+    },
+  });
 
   // snack bar counter with stools
   box(world, 0.9, 1.05, 4.0, '#f08a1c', 21, 0.52, 17);
@@ -1023,24 +1134,74 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     ball(world, 0.07, c, 21 + fx, 1.23, 18.7 + fz);
   }
   for (const z of [15.6, 17, 18.4]) stool(19.9, z, MUSTARD, 0.75, Math.PI / 2);
+  const snack = box(world, 0.16, 0.22, 0.06, TOMATO, 21, 1.25, 16.3);
+  snack.visible = false;
+  const snackFrom = new THREE.Vector3(21, 1.25, 16.3);
+  activities.push({
+    id: 'snacks',
+    marker: new THREE.Vector3(21, 1.75, 16.3),
+    stand: { x: 19.2, z: 16.3, yaw: Math.PI / 2 },
+    start: () => {
+      (snack.material as THREE.MeshStandardMaterial) = mat([TOMATO, '#2f6fdb', GREEN, MUSTARD][Math.floor(Math.random() * 4)]);
+      snack.scale.setScalar(1);
+    },
+    animate: (e, active, hand) => {
+      snack.visible = active && e < 2.8;
+      if (!snack.visible) return;
+      if (e < 0.6) snack.position.lerpVectors(snackFrom, hand, e / 0.6);
+      else {
+        snack.position.copy(hand);
+        snack.position.y += 0.15 + Math.abs(Math.sin(e * 6)) * 0.08;       // munching
+        snack.scale.setScalar(Math.max(0.3, 1 - Math.max(0, e - 1.8)));     // bag empties
+      }
+    },
+  });
 
-  // drinks fridge behind the counter: glass door full of bottles
-  box(world, 0.8, 2.1, 1.1, '#d93a2b', 24.2, 1.05, 17.2);
-  box(world, 0.04, 1.6, 0.9, '#1c2b33', 23.8, 1.0, 17.2);
+  // drinks fridge on the wall beside the bar: glass door full of bottles; the door swings open
+  const FZ = 12.8;
+  box(world, 0.8, 2.1, 1.1, '#d93a2b', 24.2, 1.05, FZ);
+  box(world, 0.04, 1.6, 0.9, '#1c2b33', 23.8, 1.0, FZ);
   const bottleColors = ['#f2c230', '#e0452f', '#43a85a', '#2f6fdb', '#f08a1c', '#ffffff'];
   for (let row = 0; row < 4; row++) {
-    box(world, 0.06, 0.02, 0.86, '#aeb4bb', 23.76, 0.3 + row * 0.4, 17.2);
+    box(world, 0.06, 0.02, 0.86, '#aeb4bb', 23.76, 0.3 + row * 0.4, FZ);
     for (let col = 0; col < 5; col++) {
-      cyl(world, 0.045, 0.045, 0.24, bottleColors[(row * 2 + col) % bottleColors.length], 23.74, 0.44 + row * 0.4, 16.86 + col * 0.17, 10);
+      cyl(world, 0.045, 0.045, 0.24, bottleColors[(row * 2 + col) % bottleColors.length], 23.74, 0.44 + row * 0.4, FZ - 0.34 + col * 0.17, 10);
     }
   }
-  const fridgeGlass = place(new THREE.Mesh(new THREE.BoxGeometry(0.03, 1.6, 0.9), new THREE.MeshStandardMaterial({ color: '#cfe8f7', transparent: true, opacity: 0.2, roughness: 0.05 })), world, 23.72, 1.0, 17.2);
+  const door = new THREE.Group();          // hinged on its +z edge
+  door.position.set(23.72, 1.0, FZ + 0.45);
+  const fridgeGlass = place(new THREE.Mesh(new THREE.BoxGeometry(0.03, 1.6, 0.9), new THREE.MeshStandardMaterial({ color: '#cfe8f7', transparent: true, opacity: 0.2, roughness: 0.05 })), door, 0, 0, -0.45);
   fridgeGlass.userData.noCastShadow = true;
-  box(world, 0.05, 0.6, 0.05, '#d8dce0', 23.7, 1.0, 16.8);                   // handle
+  box(door, 0.05, 0.6, 0.05, '#d8dce0', -0.02, 0, -0.82);                   // handle
+  world.add(door);
   const drinksPanel = makeSign('DRINKS', '#b8321f', 1.0, 0.32, false);
-  drinksPanel.position.set(23.78, 1.92, 17.2);
+  drinksPanel.position.set(23.78, 1.92, FZ);
   drinksPanel.rotation.y = -Math.PI / 2;
   world.add(drinksPanel);
+  const bottle = new THREE.Group();
+  cyl(bottle, 0.045, 0.045, 0.24, '#43a85a', 0, 0, 0, 10);
+  cyl(bottle, 0.02, 0.03, 0.06, '#43a85a', 0, 0.15, 0, 8);
+  cyl(bottle, 0.022, 0.022, 0.02, '#f2f2f2', 0, 0.19, 0, 8);
+  bottle.visible = false;
+  world.add(bottle);
+  const bottleFrom = new THREE.Vector3(23.6, 1.24, FZ);
+  activities.push({
+    id: 'drinks',
+    marker: new THREE.Vector3(23.6, 2.45, FZ),
+    stand: { x: 21.9, z: FZ, yaw: Math.PI / 2 },
+    animate: (e, active, hand) => {
+      // door: open over 0.7s, closed again by 1.6s
+      const open = active ? (e < 0.7 ? e / 0.7 : e < 1.0 ? 1 : Math.max(0, 1 - (e - 1.0) / 0.6)) : 0;
+      door.rotation.y += (open * 1.3 - door.rotation.y) * 0.3;
+      bottle.visible = active && e > 0.6 && e < 3.2;
+      if (!bottle.visible) return;
+      if (e < 1.0) { bottle.position.lerpVectors(bottleFrom, hand, (e - 0.6) / 0.4); bottle.rotation.set(0, 0, 0); return; }
+      bottle.position.copy(hand);
+      const sip = Math.min(1, Math.max(0, (e - 1.6) / 0.4));
+      bottle.position.y += 0.25 * sip;
+      bottle.rotation.set(0, 0, sip * 1.9);                                 // tip it up to drink
+    },
+  });
 
   addPlant(world, 23.4, 20, GREY_DARK);
   addPlant(world, 14.2, 20.2, GREY_DARK);
@@ -1138,5 +1299,5 @@ export function buildWorld(scene: THREE.Scene): WorldData {
 
   scene.add(world);
   addClouds(scene);
-  return { colliders, seats, rooms, walls: allWalls };
+  return { colliders, seats, rooms, walls: allWalls, activities };
 }

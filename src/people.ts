@@ -418,8 +418,8 @@ function addHair(head: THREE.Group, look: PersonLook) {
 
 // ----------------------------------------------------------------- animation
 
-/** Animate a character. `walk` is 0 (idle) to 1 (full stride); `sit` blends into a seated pose. */
-export function animateCharacter(rig: CharacterRig, t: number, walk: number, sit = 0) {
+/** Animate a character. `walk` is 0 (idle) to 1 (full stride); `sit` and `reach` blend into seated and hands-busy poses. */
+export function animateCharacter(rig: CharacterRig, t: number, walk: number, sit = 0, reach = 0) {
   const stride = Math.sin(t * 9) * 0.6 * walk;
   rig.legL.rotation.x = stride * (1 - sit) - 1.45 * sit;
   rig.legR.rotation.x = -stride * (1 - sit) - 1.45 * sit;
@@ -430,5 +430,8 @@ export function animateCharacter(rig: CharacterRig, t: number, walk: number, sit
   rig.armR.rotation.z = rig.armSpread + sway;
   rig.inner.position.y = (Math.abs(Math.sin(t * 9)) * 0.04 * walk + Math.sin(t * 2) * 0.008 * (1 - walk)) * (1 - sit);
   rig.inner.rotation.z = Math.sin(t * 9) * 0.03 * walk;
-  rig.head.rotation.y = Math.sin(t * 0.7) * 0.25 * (1 - walk);
+  rig.head.rotation.y = Math.sin(t * 0.7) * 0.25 * (1 - walk) * (1 - reach);
+  // reaching: both arms forward and busy (playing, grabbing, throwing)
+  rig.armL.rotation.x -= reach * (0.95 + Math.sin(t * 11) * 0.2);
+  rig.armR.rotation.x -= reach * (0.95 + Math.sin(t * 11 + 1.7) * 0.25);
 }
