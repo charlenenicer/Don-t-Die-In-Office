@@ -232,7 +232,9 @@ class App {
     if (playing) {
       text = `${playing.charAt(0).toUpperCase()}${playing.slice(1)}… • WASD to stop`;
     } else if (this.game.isSitting()) {
-      text = 'Seated • press WASD / arrows to stand up';
+      text = this.game.canSpin()
+        ? 'Seated • Space to spin • WASD / arrows to stand up'
+        : 'Seated • press WASD / arrows to stand up';
     } else if (nearbyChar) {
       text = `Press E to talk to ${nearbyChar.name}`;
     } else if (nearbyItem && !nearbyItem.collected) {

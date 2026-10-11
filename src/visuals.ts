@@ -298,8 +298,11 @@ function deskPlant(parent: THREE.Object3D, x: number, y: number, z: number, n: n
   ball(parent, 0.04, green, x, y + 0.17, z);
 }
 
-/** A rolling office chair: five-star base with casters, gas lift, cushion, curved back, arms. */
-function officeChair(parent: THREE.Object3D, x: number, z: number, color: string, seatH: number, yaw: number) {
+/**
+ * A rolling office chair: five-star base with casters, gas lift, cushion, curved back, arms.
+ * Returns the swivel (seat, back and arms), which turns on the fixed base.
+ */
+function officeChair(parent: THREE.Object3D, x: number, z: number, color: string, seatH: number, yaw: number): THREE.Group {
   const g = new THREE.Group();
   g.position.set(x, 0, z);
   g.rotation.y = yaw; // faces +z before rotation
@@ -317,21 +320,23 @@ function officeChair(parent: THREE.Object3D, x: number, z: number, color: string
   }
   cyl(g, 0.07, 0.09, 0.07, dark, 0, 0.13, 0, 16);       // hub
   cyl(g, 0.035, 0.035, seatH - 0.2, '#9aa0a8', 0, (seatH + 0.0) / 2 + 0.03, 0, 12); // gas lift
-  box(g, 0.34, 0.04, 0.34, dark, 0, seatH - 0.06, 0);    // seat plate
+  const swivel = new THREE.Group();
+  g.add(swivel);
+  box(swivel, 0.34, 0.04, 0.34, dark, 0, seatH - 0.06, 0);    // seat plate
 
   // cushioned seat and curved backrest
-  ball(g, 0.27, color, 0, seatH - 0.01, 0.0, 1, 0.22, 1);
-  const back = ball(g, 0.27, color, 0, seatH + 0.4, -0.24, 1, 1.15, 0.2);
+  ball(swivel, 0.27, color, 0, seatH - 0.01, 0.0, 1, 0.22, 1);
+  const back = ball(swivel, 0.27, color, 0, seatH + 0.4, -0.24, 1, 1.15, 0.2);
   back.rotation.x = -0.12;
-  box(g, 0.07, 0.34, 0.05, dark, 0, seatH + 0.12, -0.2).rotation.x = -0.12; // back support
+  box(swivel, 0.07, 0.34, 0.05, dark, 0, seatH + 0.12, -0.2).rotation.x = -0.12; // back support
 
   // armrests
   for (const side of [-1, 1]) {
-    box(g, 0.04, 0.2, 0.04, dark, side * 0.3, seatH + 0.1, -0.02);
-    box(g, 0.07, 0.035, 0.3, dark, side * 0.3, seatH + 0.21, -0.04);
+    box(swivel, 0.04, 0.2, 0.04, dark, side * 0.3, seatH + 0.1, -0.02);
+    box(swivel, 0.07, 0.035, 0.3, dark, side * 0.3, seatH + 0.21, -0.04);
   }
   parent.add(g);
-  return g;
+  return swivel;
 }
 
 /** A football match on the lounge TV. */
@@ -451,6 +456,8 @@ export interface Seat {
   yaw: number;
   /** id of the room the seat is in, or null in the open office (filled in by buildWorld) */
   room?: string | null;
+  /** the turning part of a swivel office chair; seats without one can't spin */
+  swivel?: THREE.Object3D;
 }
 
 /** A walled room. Its furniture lives in `interior`, shown only when the player is at or inside it. */
@@ -496,8 +503,143 @@ export interface WorldData {
   activities: ActivitySpot[];
 }
 
-const WALL_H = 8;
+const WALL_H = 7;
 const WALL_T = 0.25;
+/** every wall, partition and pillar shares this grey; rooms keep their color around the doorway */
+const WALL_GREY = GREY_MID;
+
+/** A framed canvas painting, facing +z. Styles are simple procedural "office art". */
+function makePainting(style: 'sunset' | 'blocks' | 'circles' | 'mountain', w: number, h: number, rand: () => number): THREE.Group {
+  const group = new THREE.Group();
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = Math.round(256 * (h / w));
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const ctx = canvas.getContext('2d')!;
+  if (style === 'sunset') {
+    const sky = ctx.createLinearGradient(0, 0, 0, ch);
+    sky.addColorStop(0, '#f6a05a');
+    sky.addColorStop(0.6, '#f7d77a');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = '#fff3c4';
+    ctx.beginPath();
+    ctx.arc(cw * 0.62, ch * 0.55, ch * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+    for (const [y, c] of [[0.6, '#c0603e'], [0.72, '#8a3f3a'], [0.85, '#4f2a3a']] as [number, string][]) {
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.moveTo(0, ch);
+      for (let x = 0; x <= cw; x += 16) ctx.lineTo(x, ch * y + Math.sin(x * 0.03 + y * 10) * ch * 0.05);
+      ctx.lineTo(cw, ch);
+      ctx.fill();
+    }
+  } else if (style === 'blocks') {
+    ctx.fillStyle = '#f4f1e8';
+    ctx.fillRect(0, 0, cw, ch);
+    const colors = ['#e0452f', '#2f6fdb', '#f2c230', '#f4f1e8', '#f4f1e8'];
+    const xs = [0, cw * (0.25 + rand() * 0.2), cw * (0.65 + rand() * 0.15), cw];
+    const ys = [0, ch * (0.3 + rand() * 0.2), ch * (0.7 + rand() * 0.1), ch];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) {
+        ctx.fillStyle = colors[Math.floor(rand() * colors.length)];
+        ctx.fillRect(xs[i], ys[j], xs[i + 1] - xs[i], ys[j + 1] - ys[j]);
+      }
+    }
+    ctx.strokeStyle = '#1b1c20';
+    ctx.lineWidth = 8;
+    for (const x of xs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke(); }
+    for (const y of ys) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke(); }
+  } else if (style === 'circles') {
+    ctx.fillStyle = '#1f3b4d';
+    ctx.fillRect(0, 0, cw, ch);
+    const colors = ['#f2c230', '#e0452f', '#1f9d9a', '#efe4c4', '#f08a1c'];
+    for (let i = 0; i < 9; i++) {
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.beginPath();
+      ctx.arc(rand() * cw, rand() * ch, ch * (0.08 + rand() * 0.25), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  } else {
+    const sky = ctx.createLinearGradient(0, 0, 0, ch);
+    sky.addColorStop(0, '#8fc3e8');
+    sky.addColorStop(1, '#dff0f8');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, cw, ch);
+    for (const [cx, peak, c] of [[0.3, 0.25, '#47688f'], [0.7, 0.35, '#55769c'], [0.5, 0.45, '#3e5f86']] as [number, number, string][]) {
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.moveTo(cw * (cx - 0.45), ch);
+      ctx.lineTo(cw * cx, ch * peak);
+      ctx.lineTo(cw * (cx + 0.45), ch);
+      ctx.fill();
+      ctx.fillStyle = '#f1f5f8';
+      ctx.beginPath();
+      ctx.moveTo(cw * (cx - 0.08), ch * (peak + 0.14));
+      ctx.lineTo(cw * cx, ch * peak);
+      ctx.lineTo(cw * (cx + 0.08), ch * (peak + 0.14));
+      ctx.fill();
+    }
+    ctx.fillStyle = '#4f9a5c';
+    ctx.fillRect(0, ch * 0.88, cw, ch * 0.12);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  group.add(new THREE.Mesh(new THREE.BoxGeometry(w + 0.16, h + 0.16, 0.06), mat('#3a3128')));
+  const art = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
+  art.position.z = 0.031;
+  group.add(art);
+  group.traverse((o) => { o.userData.noCastShadow = true; });
+  return group;
+}
+
+/** A glowing neon slogan on a clear backer, facing +z. */
+function makeNeon(text: string, color: string, h = 1.1): THREE.Group {
+  const group = new THREE.Group();
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d')!;
+  const font = `italic 800 96px 'Avenir Next', 'Segoe UI', Arial, sans-serif`;
+  ctx.font = font;
+  canvas.width = Math.ceil(ctx.measureText(text).width) + 80;
+  canvas.height = 160;
+  ctx.font = font;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // a wide soft glow, then the tube itself with a white-hot core
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 30;
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = color;
+  ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = color;
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ffffff';
+  ctx.globalAlpha = 0.8;
+  ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const w = h * (canvas.width / canvas.height);
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false }),
+  );
+  glow.position.z = 0.03;
+  group.add(glow);
+  const backer = new THREE.Mesh(
+    new THREE.BoxGeometry(w * 0.92, h * 0.8, 0.02),
+    new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.12, roughness: 0.1 }),
+  );
+  group.add(backer);
+  group.traverse((o) => { o.userData.noCastShadow = true; });
+  return group;
+}
+
 
 function makeSign(text: string, bg: string, w = 5, h = 1.2, hanging = true): THREE.Group {
   const group = new THREE.Group();
@@ -664,7 +806,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   const allWalls: THREE.Object3D[] = [];
   const wallLine = (
     axis: 'x' | 'z', fixed: number, from: number, to: number, color: string,
-    gaps: [number, number][] = [], collect?: THREE.Object3D[], otherColor = color,
+    gaps: [number, number][] = [], collect?: THREE.Object3D[],
   ) => {
     const dims = (l: number, h: number): [number, number, number] => (axis === 'x' ? [l, h, WALL_T] : [WALL_T, h, l]);
     const pos = (m: number, y: number): [number, number, number] => (axis === 'x' ? [m, y, fixed] : [fixed, y, m]);
@@ -676,30 +818,23 @@ export function buildWorld(scene: THREE.Scene): WorldData {
       cur = g1;
     }
     if (cur < to) segs.push([cur, to]);
-    // one slab when both faces share a color, two half-thickness slabs otherwise
-    // (`color` faces the negative side of the axis, `otherColor` the positive side)
-    const slab = (m: number, len: number, h: number, y: number) => {
-      if (otherColor === color) {
-        box(world, ...dims(len, h), color, ...pos(m, y));
-        return;
-      }
-      for (const [c, off] of [[color, -WALL_T / 4], [otherColor, WALL_T / 4]] as [string, number][]) {
-        const half: [number, number, number] = axis === 'x' ? [len, h, WALL_T / 2] : [WALL_T / 2, h, len];
-        const at: [number, number, number] = axis === 'x' ? [m, y, fixed + off] : [fixed + off, y, m];
-        box(world, ...half, c, ...at);
-      }
-    };
     const before = world.children.length;
     for (const [a, b] of segs) {
       const len = b - a;
       const m = (a + b) / 2;
-      slab(m, len, WALL_H, WALL_H / 2);
+      box(world, ...dims(len, WALL_H), WALL_GREY, ...pos(m, WALL_H / 2));
       if (axis === 'x') solid(m, fixed, len, WALL_T + 0.1);
       else solid(fixed, m, WALL_T + 0.1, len);
     }
-    // wall above each doorway, so the opening is door-height
+    // each doorway: grey wall above it, framed in the room's color so rooms are easy to tell apart
+    const DOOR_H = 3.2;
+    const FRAME = 0.24;
+    const frameDims = (l: number, h: number): [number, number, number] => (axis === 'x' ? [l, h, WALL_T + 0.06] : [WALL_T + 0.06, h, l]);
     for (const [g0, g1] of sorted) {
-      slab((g0 + g1) / 2, g1 - g0, WALL_H - 3.2, 3.2 + (WALL_H - 3.2) / 2);
+      box(world, ...dims(g1 - g0, WALL_H - DOOR_H), WALL_GREY, ...pos((g0 + g1) / 2, DOOR_H + (WALL_H - DOOR_H) / 2));
+      box(world, ...frameDims(FRAME, DOOR_H + FRAME), color, ...pos(g0 - FRAME / 2, (DOOR_H + FRAME) / 2));
+      box(world, ...frameDims(FRAME, DOOR_H + FRAME), color, ...pos(g1 + FRAME / 2, (DOOR_H + FRAME) / 2));
+      box(world, ...frameDims(g1 - g0 + FRAME * 2, FRAME), color, ...pos((g0 + g1) / 2, DOOR_H + FRAME / 2));
     }
     for (let i = before; i < world.children.length; i++) {
       world.children[i].userData.keep = true;
@@ -721,13 +856,14 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     box(world, 0.5, 0.03, 0.2, '#d8d8d8', x, 0.86, z + 0.35 * faceZ);
   };
   const stool = (x: number, z: number, color: string, h = 0.5, yaw = 0, back = false) => {
+    let swivel: THREE.Object3D | undefined;
     if (back) {
-      officeChair(world, x, z, color, h, yaw);
+      swivel = officeChair(world, x, z, color, h, yaw);
     } else {
       cyl(world, 0.26, 0.26, 0.1, color, x, h, z, 20);
       cyl(world, 0.05, 0.05, h - 0.05, '#444', x, (h - 0.05) / 2, z, 10);
     }
-    seats.push({ x, z, top: h + 0.05, yaw });
+    seats.push({ x, z, top: h + 0.05, yaw, swivel });
   };
   /** A row of desks pushed side by side, each with a computer and a chair. */
   const deskRow = (z: number, count: number, chairColors: string[]) => {
@@ -804,28 +940,12 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     const bb = alongX ? [len - 1, 0.18, 0.1] : [0.1, 0.18, len - 1];
     box(world, ...(bb as [number, number, number]), '#f5f0e0', ...(alongX ? [0, 0.09, fixed + inward * 0.38] : [fixed + inward * 0.38, 0.09, 0]) as [number, number, number]);
   };
-  addWall(true, -25, GREY_LIGHT, GREY_MID);
-  addWall(true, 25, GREY_LIGHT, GREY_MID);
-  addWall(false, -25, GREY_LIGHT, GREY_MID);
-  addWall(false, 25, GREY_LIGHT, GREY_MID);
+  addWall(true, -25, WALL_GREY, WALL_GREY);
+  addWall(true, 25, WALL_GREY, WALL_GREY);
+  addWall(false, -25, WALL_GREY, WALL_GREY);
+  addWall(false, 25, WALL_GREY, WALL_GREY);
   for (const o of world.children) o.userData.keep = true; // everything so far is structure, never a room's contents
 
-  // inside each room, the outer wall's solid strips (below and above the windows) take the room color
-  const trim = (alongX: boolean, fixed: number, from: number, to: number, color: string) => {
-    const inward = fixed > 0 ? -1 : 1;
-    const at = fixed + inward * 0.37;
-    for (const [h, y] of [[1.0, 0.5], [1.0, WALL_H - 0.5]] as [number, number][]) {
-      if (alongX) box(world, to - from, h, 0.04, color, (from + to) / 2, y, at);
-      else box(world, 0.04, h, to - from, color, at, y, (from + to) / 2);
-    }
-  };
-  trim(true, -25, -24.6, -8.6, MUSTARD);   // meeting
-  trim(false, -25, -24.6, -13.1, MUSTARD);
-  trim(true, -25, -8.4, 8.4, BLUE);        // manager
-  trim(true, -25, 8.6, 24.6, TOMATO);      // boss
-  trim(false, 25, -24.6, -13.1, TOMATO);
-  trim(false, -25, -8.9, 2.9, GREEN);      // lunch
-  trim(false, 25, -8.9, 2.9, PURPLE);      // copy
   for (const o of world.children) o.userData.keep = true;
 
   const ceiling = place(new THREE.Mesh(new THREE.BoxGeometry(52, 0.3, 52), new THREE.MeshBasicMaterial({ color: '#eef0f2' })), world, 0, WALL_H + 0.15, 0);
@@ -836,8 +956,8 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   wallLine('x', -13, -24.5, -8.5, MUSTARD, [[-17, -14]], front.meeting);
   wallLine('x', -13, -8.5, 8.5, BLUE, [[-1.5, 1.5]], front.manager);
   wallLine('x', -13, 8.5, 24.5, TOMATO, [[14.5, 17.5]], front.boss);
-  wallLine('z', -8.5, -24.5, -13, MUSTARD, [], undefined, BLUE);   // meeting | manager
-  wallLine('z', 8.5, -24.5, -13, BLUE, [], undefined, TOMATO);     // manager | boss
+  wallLine('z', -8.5, -24.5, -13, MUSTARD);   // meeting | manager
+  wallLine('z', 8.5, -24.5, -13, BLUE);       // manager | boss
 
   // meeting room: long table with stools, a screen on the back wall
   desk(-16.5, -19.5, 7, 2.2, '#c98f0f', '#7a560a');
@@ -1244,13 +1364,63 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   for (const x of [-16, 0, 16]) {
     for (const z of [10, 21]) {
       const c = lampColors[lampIdx++ % lampColors.length];
-      cyl(world, 0.02, 0.02, 1.2, '#333', x, WALL_H - 0.6, z, 6);
-      const shade = cyl(world, 0.15, 0.6, 0.4, c, x, WALL_H - 1.4, z, 28);
+      cyl(world, 0.02, 0.02, 0.6, '#333', x, WALL_H - 0.3, z, 6);
+      const shade = cyl(world, 0.15, 0.6, 0.4, c, x, WALL_H - 0.8, z, 28);
       shade.userData.noCastShadow = true;
-      const bulb = place(new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), new THREE.MeshBasicMaterial({ color: '#fff6c8' })), world, x, WALL_H - 1.65, z);
+      const bulb = place(new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), new THREE.MeshBasicMaterial({ color: '#fff6c8' })), world, x, WALL_H - 1.05, z);
       bulb.userData.noCastShadow = true;
     }
   }
+
+  // ---- wall art: paintings and motivational neon ---------------------------------
+  // Each piece is parented to the wall it hangs on, so it disappears with that wall
+  // when the wall is cut away for the camera. (x, z) is a point on the wall's center
+  // line; (dx, dz) is the direction the piece faces.
+  world.updateMatrixWorld(true);
+  const wallBox = new THREE.Box3();
+  const onWall = (obj: THREE.Object3D, x: number, y: number, z: number, dx: number, dz: number) => {
+    const point = new THREE.Vector3(x, y, z);
+    const wall = allWalls.find((w) => wallBox.setFromObject(w).containsPoint(point));
+    if (!wall) throw new Error(`no wall at (${x}, ${y}, ${z})`);
+    obj.position.set(x + (dx * WALL_T) / 2, y, z + (dz * WALL_T) / 2).sub(wall.position);
+    obj.rotation.y = Math.atan2(dx, dz);
+    wall.add(obj);
+  };
+  const artRand = mulberry32(7);
+  const painting = (style: Parameters<typeof makePainting>[0], w: number, h: number) => makePainting(style, w, h, artRand);
+  const NEON_PINK = '#ff3fa4';
+  const NEON_CYAN = '#3ff4ff';
+  const NEON_YELLOW = '#ffe23f';
+  const NEON_GREEN = '#5dff7a';
+  const NEON_ORANGE = '#ff9a3f';
+  const NEON_PURPLE = '#c77dff';
+
+  // open-office side of the back row
+  onWall(painting('sunset', 2.4, 1.6), -21, 2.4, -13, 0, 1);
+  onWall(makeNeon('Work Hard', NEON_PINK), -11.25, 4.1, -13, 0, 1);
+  onWall(painting('blocks', 1.4, 1.4), -11.25, 2.3, -13, 0, 1);
+  onWall(painting('circles', 2.2, 1.5), -5, 2.4, -13, 0, 1);
+  onWall(makeNeon('Dream Big', NEON_CYAN), 5, 4.1, -13, 0, 1);
+  onWall(painting('mountain', 2.2, 1.4), 5, 2.3, -13, 0, 1);
+  onWall(painting('blocks', 1.6, 1.6), 11.5, 2.4, -13, 0, 1);
+  onWall(makeNeon('No Excuses', NEON_YELLOW), 21, 4.1, -13, 0, 1);
+  onWall(painting('sunset', 2.2, 1.4), 21, 2.3, -13, 0, 1);
+  // outside of the lunch and copy rooms
+  onWall(makeNeon('Good Vibes Only', NEON_GREEN), -17.75, 4.1, 3, 0, 1);
+  onWall(painting('blocks', 1.6, 1.6), -22, 2.4, 3, 0, 1);
+  onWall(painting('sunset', 2, 1.4), -13.5, 2.4, 3, 0, 1);
+  onWall(painting('circles', 1.8, 1.3), -11, 2.4, 0.75, 1, 0);
+  onWall(painting('mountain', 1.8, 1.3), 11, 2.4, 0.75, -1, 0);
+  onWall(painting('circles', 2, 1.4), 17.5, 2.4, 3, 0, 1);
+  onWall(makeNeon('Hustle', NEON_ORANGE), 21.5, 3.2, 3, 0, 1);
+  // inside the rooms
+  onWall(makeNeon('Synergy', NEON_PURPLE), -8.5, 3.4, -19, -1, 0);
+  onWall(painting('mountain', 2.4, 1.6), -8.5, 2.4, -19, 1, 0);
+  onWall(painting('circles', 2, 1.4), 8.5, 2.4, -19, -1, 0);
+  onWall(makeNeon('Be The Boss', NEON_YELLOW), 8.5, 3.6, -19, 1, 0);
+  onWall(painting('blocks', 1.4, 1.4), 8.5, 2.0, -19, 1, 0);
+  onWall(makeNeon('Coffee First', NEON_PINK, 0.8), -11, 3.2, 0.75, -1, 0);
+  onWall(makeNeon('Do It Now', NEON_CYAN, 0.8), 11, 3.2, 0.75, 1, 0);
 
   buildHighriseView(world, rand);
 
