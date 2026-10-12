@@ -6,10 +6,11 @@ import type { Character, InventoryItem } from './types';
 import { GAME_HOURS_PER_REAL_SECOND } from './types';
 import { VoiceClient } from './voice-client';
 import {
-  FOG_COLOR, buildWorld, createSkyTexture, createWibbler, roomAt,
+  FOG_COLOR, buildWorld, createSkyTexture, roomAt,
 } from './visuals';
 import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
 import type { CharacterRig } from './people';
+import { PICKUP_CLEARANCE, createPickup } from './pickups';
 import type { ActivitySpot, Collider, Room, Seat } from './visuals';
 import {
   ACTIVITY_RULES, COOLDOWN_HOURS, absoluteHours, cooldownMinutesLeft, describeEffects,
@@ -54,7 +55,7 @@ export class Game {
   
   private characters: Map<string, THREE.Group> = new Map();
   private characterLabels: Map<string, HTMLElement> = new Map();
-  private itemMeshes: Map<string, THREE.Mesh> = new Map();
+  private itemMeshes: Map<string, THREE.Group> = new Map();
   
   private keys: Set<string> = new Set();
   private nearbyCharacter: Character | null = null;
@@ -77,7 +78,7 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(
       60,
       container.clientWidth / container.clientHeight,
-      0.1,
+      0.5, // the camera never gets this close to anything; a larger near plane keeps thin floor layers from flickering
       1600
     );
     this.camera.position.set(0, 5.5, 23.5);
@@ -176,17 +177,47 @@ export class Game {
 
   private createItems() {
     ITEMS.forEach(item => {
-      const mesh = createWibbler();
-      mesh.position.set(...item.position);
+      const { group: mesh, spin } = createPickup(item.id);
+      const room = roomAt(this.rooms, item.position[0], item.position[2]);
+      const [x, z] = this.clearSpotFor(item.position[0], item.position[2], room);
+      mesh.position.set(x, 0, z);
       mesh.userData.item = item;
-      mesh.userData.room = roomAt(this.rooms, item.position[0], item.position[2]);
-      
-      // Gentle rotation
+      mesh.userData.room = room;
+      mesh.userData.spin = spin;
+
+      // Gentle rotation, each at its own pace
       mesh.userData.rotationSpeed = 0.5 + Math.random() * 0.5;
-      
+      mesh.userData.bobOffset = Math.random() * Math.PI * 2;
+
       this.scene.add(mesh);
       this.itemMeshes.set(item.id, mesh);
     });
+  }
+
+  /**
+   * Pickups must never sit inside furniture, walls, plants or people: if the
+   * planned spot isn't clear, move out in rings to the nearest clear one in the
+   * same room.
+   */
+  private clearSpotFor(x: number, z: number, room: Room | null): [number, number] {
+    const clear = (px: number, pz: number) =>
+      Math.abs(px) <= 22 && pz >= -22 && pz <= 20.5 &&
+      roomAt(this.rooms, px, pz) === room &&
+      this.colliders.every((c) => {
+        const dx = px - Math.max(c.minX, Math.min(px, c.maxX));
+        const dz = pz - Math.max(c.minZ, Math.min(pz, c.maxZ));
+        return dx * dx + dz * dz >= PICKUP_CLEARANCE * PICKUP_CLEARANCE;
+      });
+    if (clear(x, z)) return [x, z];
+    for (let r = 0.25; r <= 4; r += 0.25) {
+      for (let k = 0; k < 24; k++) {
+        const a = (k / 24) * Math.PI * 2;
+        const px = x + Math.cos(a) * r;
+        const pz = z + Math.sin(a) * r;
+        if (clear(px, pz)) return [px, pz];
+      }
+    }
+    return [x, z];
   }
 
   private setupInput() {
@@ -354,6 +385,7 @@ export class Game {
     this.updateRooms();
     this.checkNearbyInteractables();
   }
+
 
 
 
@@ -705,10 +737,12 @@ export class Game {
   }
 
   private updateItems(delta: number) {
+    const t = this.clock.elapsedTime;
     this.itemMeshes.forEach(mesh => {
       if (!mesh.userData.item.collected) {
-        mesh.rotation.y += delta * mesh.userData.rotationSpeed;
-        mesh.position.y = 0.65 + Math.sin(Date.now() * 0.002) * 0.1;
+        const spin = mesh.userData.spin as THREE.Group;
+        spin.rotation.y += delta * mesh.userData.rotationSpeed;
+        spin.position.y = 0.35 + Math.sin(t * 2 + mesh.userData.bobOffset) * 0.08;
       }
     });
   }

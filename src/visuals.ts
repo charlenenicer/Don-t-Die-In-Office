@@ -48,22 +48,6 @@ function mulberry32(seed: number) {
   };
 }
 
-// ------------------------------------------------------------------ pickups
-
-/** The red rotund bowling-pin collectible ("wibbler"). */
-export function createWibbler(): THREE.Mesh {
-  const profile = [
-    [0, 0], [0.17, 0.02], [0.26, 0.17], [0.25, 0.36], [0.16, 0.52],
-    [0.1, 0.65], [0.12, 0.77], [0.08, 0.86], [0, 0.88],
-  ].map(([x, y]) => new THREE.Vector2(x, y));
-  const geometry = new THREE.LatheGeometry(profile, 28);
-  geometry.translate(0, -0.44, 0);
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: '#e8392b', roughness: 0.45 }));
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
-}
-
 // --------------------------------------------------------------------- sky
 
 export function createSkyTexture(): THREE.CanvasTexture {
@@ -157,6 +141,7 @@ function tiledFloor(parent: THREE.Object3D, w: number, d: number, x: number, z: 
   );
   mesh.userData.noCollide = true;
   mesh.userData.keep = true;
+  mesh.userData.noCastShadow = true; // flat floor covering: receives shadows, never casts them
   return place(mesh, parent, x, y, z);
 }
 
@@ -422,6 +407,189 @@ function pingPong(parent: THREE.Object3D, x: number, z: number) {
   cyl(parent, 0.08, 0.08, 0.02, '#2f6fdb', x + 0.9, 0.8, z - 0.3, 16);
   const pongBall = ball(parent, 0.025, '#f08a1c', x + 0.4, 0.82, z + 0.1);
   return { paddle, pongBall };
+}
+
+// --------------------------------------------------------------- luxury lounge
+
+const GOLD = '#c9a24a';
+const BRASS = '#b8913a';
+const VELVET_GREEN = '#1f5e4a';
+const VELVET_NAVY = '#24345e';
+const VELVET_WINE = '#7a1f2e';
+const DARK_WOOD = '#4a2e1f';
+const MARBLE = '#f4f1ec';
+
+/** Where someone sits on a piece of furniture, in its own coordinates (facing +z). */
+interface SeatSpot { lx: number; lz: number; top: number }
+
+/** Tufted Chesterfield: rolled arms, buttoned back, wooden bun feet. Faces +z. */
+function chesterfield(parent: THREE.Object3D, w: number, color: string): SeatSpot[] {
+  box(parent, w, 0.32, 0.9, color, 0, 0.3, 0);                                // base
+  const n = 3;
+  for (let i = 0; i < n; i++) {
+    const cw = (w - 0.5) / n;
+    box(parent, cw - 0.04, 0.14, 0.72, color, -w / 2 + 0.25 + cw * (i + 0.5), 0.52, 0.06);  // seat cushions
+  }
+  box(parent, w, 0.55, 0.22, color, 0, 0.72, -0.34);                           // back
+  const back = cyl(parent, 0.11, 0.11, w, color, 0, 1.0, -0.34, 16);           // rolled top of the back
+  back.rotation.z = Math.PI / 2;
+  for (let r = 0; r < 2; r++) {                                                // deep button tufting
+    for (let c = 0; c < Math.round(w / 0.28); c++) {
+      ball(parent, 0.018, '#0f3326', -w / 2 + 0.2 + c * 0.28 + (r % 2) * 0.14, 0.66 + r * 0.17, -0.225);
+    }
+  }
+  for (const side of [-1, 1]) {
+    box(parent, 0.22, 0.42, 0.9, color, side * (w / 2 - 0.11), 0.45, 0);     // arms
+    const roll = cyl(parent, 0.14, 0.14, 0.92, color, side * (w / 2 - 0.11), 0.68, 0, 16);
+    roll.rotation.x = Math.PI / 2;                                             // rolled arm
+    for (const fz of [-0.35, 0.35]) cyl(parent, 0.05, 0.04, 0.14, DARK_WOOD, side * (w / 2 - 0.1), 0.07, fz, 10);
+  }
+  return [-1, 0, 1].map((k) => ({ lx: k * (w - 0.5) / 3, lz: 0.08, top: 0.6 }));
+}
+
+/** Wingback armchair on gold legs. Faces +z. */
+function wingback(parent: THREE.Object3D, color: string): SeatSpot[] {
+  for (const lx of [-0.28, 0.28]) for (const lz of [-0.24, 0.24]) cyl(parent, 0.03, 0.02, 0.28, GOLD, lx, 0.14, lz, 8);
+  box(parent, 0.72, 0.2, 0.62, color, 0, 0.38, 0);                             // seat base
+  box(parent, 0.6, 0.1, 0.5, color, 0, 0.53, 0.04);                            // cushion
+  box(parent, 0.72, 0.95, 0.14, color, 0, 0.95, -0.3);                         // tall back
+  for (const side of [-1, 1]) {
+    const wing = box(parent, 0.12, 0.6, 0.34, color, side * 0.36, 1.0, -0.14); // wings
+    wing.rotation.y = -side * 0.35;
+    const arm = cyl(parent, 0.07, 0.07, 0.55, color, side * 0.34, 0.6, 0.02, 12);
+    arm.rotation.x = Math.PI / 2;
+  }
+  return [{ lx: 0, lz: 0.05, top: 0.58 }];
+}
+
+/** Velvet chaise longue: long seat with a sloped back at one end. Faces +z along its length. */
+function chaise(parent: THREE.Object3D, color: string): SeatSpot[] {
+  for (const lx of [-0.28, 0.28]) for (const lz of [-0.75, 0.75]) cyl(parent, 0.03, 0.02, 0.2, GOLD, lx, 0.1, lz, 8);
+  box(parent, 0.72, 0.22, 1.8, color, 0, 0.31, 0);
+  box(parent, 0.66, 0.08, 1.7, color, 0, 0.46, 0.04);
+  const back = box(parent, 0.72, 0.7, 0.16, color, 0, 0.68, -0.78);
+  back.rotation.x = -0.45;
+  const roll = cyl(parent, 0.12, 0.12, 0.74, color, 0, 0.95, -0.92, 14);
+  roll.rotation.z = Math.PI / 2;
+  const arm = cyl(parent, 0.1, 0.1, 0.9, color, -0.33, 0.55, -0.35, 12);
+  arm.rotation.x = Math.PI / 2;
+  return [{ lx: 0, lz: -0.2, top: 0.5 }];
+}
+
+/** Egg chair: open white shell with a colored cushion on a chrome pedestal. Opening faces +z. */
+function eggChair(parent: THREE.Object3D, color: string): SeatSpot[] {
+  cyl(parent, 0.32, 0.36, 0.04, '#cfd3d8', 0, 0.02, 0, 24);                    // base
+  cyl(parent, 0.04, 0.04, 0.3, '#cfd3d8', 0, 0.18, 0, 10);                     // pedestal
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 28, 18, Math.PI * 0.8, Math.PI * 1.4, 0, Math.PI * 0.82),
+    new THREE.MeshStandardMaterial({ color: '#f6f4ef', roughness: 0.35, side: THREE.DoubleSide }),
+  );
+  shell.scale.set(1, 1.2, 1);
+  shell.position.y = 0.8;
+  parent.add(shell);
+  ball(parent, 0.46, color, 0, 0.78, -0.08, 0.95, 1.15, 0.85);                // padded lining
+  ball(parent, 0.34, color, 0, 0.5, 0.06, 1, 0.3, 1);                          // seat cushion
+  return [{ lx: 0, lz: 0.05, top: 0.55 }];
+}
+
+/** Round velvet pouf with a button on top. */
+function pouf(parent: THREE.Object3D, color: string): SeatSpot[] {
+  cyl(parent, 0.34, 0.32, 0.4, color, 0, 0.2, 0, 24);
+  ball(parent, 0.33, color, 0, 0.4, 0, 1, 0.18, 1);
+  ball(parent, 0.03, GOLD, 0, 0.46, 0);
+  return [{ lx: 0, lz: 0, top: 0.45 }];
+}
+
+/** Marble-topped table on a gold pedestal. */
+function marbleTable(parent: THREE.Object3D, r: number, h: number) {
+  cyl(parent, r * 0.5, r * 0.55, 0.04, GOLD, 0, 0.02, 0, 24);
+  cyl(parent, 0.05, 0.05, h - 0.06, GOLD, 0, h / 2, 0, 12);
+  cyl(parent, r, r, 0.05, MARBLE, 0, h, 0, 36);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(r, 0.012, 6, 40), mat(GOLD));
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = h;
+  parent.add(rim);
+}
+
+/** Brass floor lamp with a glowing drum shade. */
+function floorLamp(parent: THREE.Object3D) {
+  cyl(parent, 0.2, 0.22, 0.04, BRASS, 0, 0.02, 0, 20);
+  cyl(parent, 0.022, 0.022, 1.65, BRASS, 0, 0.84, 0, 10);
+  const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.36, 24, 1, true),
+    new THREE.MeshStandardMaterial({ color: '#f6e7c4', emissive: '#f3cf7a', emissiveIntensity: 0.6, side: THREE.DoubleSide }));
+  shade.position.y = 1.7;
+  shade.userData.noCastShadow = true;
+  parent.add(shade);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), new THREE.MeshBasicMaterial({ color: '#fff3c4' }));
+  bulb.position.y = 1.65;
+  bulb.userData.noCastShadow = true;
+  parent.add(bulb);
+}
+
+/** Crystal chandelier: gold rings, glowing bulbs and hanging drops, on a chain. */
+function chandelier(parent: THREE.Object3D, ceiling: number, x: number, z: number) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const y = ceiling - 1.2;
+  cyl(g, 0.012, 0.012, 1.0, GOLD, 0, y + 0.7, 0, 6);                           // chain
+  const crystal = new THREE.MeshStandardMaterial({ color: '#e8f4ff', roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.8 });
+  const bulbMat = new THREE.MeshBasicMaterial({ color: '#fff3c4' });
+  for (const [r, dy, count] of [[0.75, 0, 10], [0.45, 0.25, 6]] as [number, number, number][]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.025, 8, 40), mat(GOLD));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = y + dy;
+    g.add(ring);
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2;
+      add_(g, new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), bulbMat), Math.cos(a) * r, y + dy + 0.07, Math.sin(a) * r);
+      const drop = add_(g, new THREE.Mesh(new THREE.OctahedronGeometry(0.05), crystal), Math.cos(a) * r, y + dy - 0.12, Math.sin(a) * r);
+      drop.scale.y = 1.8;
+    }
+  }
+  add_(g, new THREE.Mesh(new THREE.OctahedronGeometry(0.1), crystal), 0, y - 0.25, 0).scale.y = 1.8;
+  g.traverse((o) => { o.userData.noCastShadow = true; });
+  parent.add(g);
+}
+
+function add_<T extends THREE.Object3D>(parent: THREE.Object3D, obj: T, x: number, y: number, z: number): T {
+  obj.position.set(x, y, z);
+  parent.add(obj);
+  return obj;
+}
+
+/** A fireplace: stone surround, dark firebox with logs and glowing flames, wooden mantel. Faces +z. */
+function fireplace(parent: THREE.Object3D) {
+  box(parent, 2.6, 1.3, 0.45, '#e8e2d6', 0, 0.65, 0);                          // stone surround
+  box(parent, 1.5, 0.8, 0.06, '#141216', 0, 0.5, 0.21);                        // firebox opening
+  box(parent, 2.9, 0.1, 0.6, DARK_WOOD, 0, 1.35, 0.02);                        // mantel
+  for (const lx of [-0.3, 0.05, 0.3]) {
+    const log = cyl(parent, 0.06, 0.06, 0.5, '#5a3820', lx, 0.2, 0.26, 8);
+    log.rotation.set(0, 0, Math.PI / 2 + lx);
+  }
+  const flame = (lx: number, h: number, c: string) => {
+    const f = add_(parent, new THREE.Mesh(new THREE.ConeGeometry(0.11, h, 10), new THREE.MeshBasicMaterial({ color: c })), lx, 0.25 + h / 2, 0.27);
+    f.userData.noCastShadow = true;
+  };
+  flame(-0.25, 0.4, '#f08a1c'); flame(0, 0.55, '#f2c230'); flame(0.24, 0.42, '#f08a1c');
+  flame(-0.1, 0.3, '#ffe9a8'); flame(0.12, 0.32, '#ffe9a8');
+  for (const lx of [-1.1, -0.9, 1.0]) cyl(parent, 0.04, 0.04, 0.22, '#f6efe0', lx, 1.51, 0.05, 10); // candles
+}
+
+/** Gold bar cart with bottles and glasses. */
+function barCart(parent: THREE.Object3D) {
+  for (const lx of [-0.4, 0.4]) for (const lz of [-0.22, 0.22]) cyl(parent, 0.015, 0.015, 0.85, GOLD, lx, 0.45, lz, 8);
+  for (const y of [0.25, 0.8]) box(parent, 0.86, 0.02, 0.5, '#2b2b33', 0, y, 0);
+  for (const lx of [-0.4, 0.4]) {
+    const wheel = cyl(parent, 0.07, 0.07, 0.03, '#26292f', lx, 0.07, 0.22, 14);
+    wheel.rotation.z = Math.PI / 2;
+  }
+  const bottles = ['#2f5e3a', '#7a1f2e', '#c98f0f', '#e8e2cf'];
+  bottles.forEach((c, i) => {
+    cyl(parent, 0.04, 0.04, 0.22, c, -0.3 + i * 0.13, 0.92, -0.08, 10);
+    cyl(parent, 0.015, 0.02, 0.07, c, -0.3 + i * 0.13, 1.06, -0.08, 8);
+  });
+  for (let i = 0; i < 3; i++) cyl(parent, 0.035, 0.025, 0.1, '#e8f4ff', 0.05 + i * 0.1, 0.86, 0.12, 10);
+  ball(parent, 0.09, '#cfd3d8', -0.2, 0.32, 0.05);                              // ice bucket
 }
 
 /** A four-legged dining chair with a slatted back. Faces +z before `yaw` is applied. */
@@ -1113,10 +1281,6 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   addPlant(world, -3.6, 14.4, GREY_DARK);
   addPlant(world, 3.6, 14.4, GREY_DARK);
 
-  // waiting area on the left
-  sofa(-17, 16.5, 4.2, GREY_DARK, 0);
-  desk(-17, 14.2, 1.6, 0.9, CREAM);
-  addPlant(world, -22, 17.5, GREY_DARK);
   addPlant(world, -9, 18.5, GREY_DARK);
   cyl(world, 0.3, 0.3, 1.1, '#cfe8f7', -9.5, 0.55, 11, 20);   // water cooler
   box(world, 0.7, 0.9, 0.7, '#e9e9ee', -9.5, 0.45, 11);
@@ -1330,8 +1494,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   for (const [px, pz, c] of [
     [-6, -12.3, GREY_DARK], [6, -12.3, GREY_DARK],              // beside the manager door
     [-8.6, 0, GREY_DARK], [8.6, 0, GREY_DARK],                  // ends of the desk area
-    [-22.6, 6.2, GREY_DARK], [-14, 6.5, GREY_DARK],             // west side, outside the lunch room
-    [-13.6, 20.2, GREY_DARK], [-5.6, 20.2, GREY_DARK], [5.6, 20.2, GREY_DARK], // along the front windows
+    [-5.6, 20.2, GREY_DARK], [5.6, 20.2, GREY_DARK], // along the front windows
     [7.2, 15.9, GREY_DARK],                                     // lounge, beside the sofa
     [23.6, 4.2, GREY_DARK], [23.6, 9.6, GREY_DARK],             // fun zone
     [-10.2, -23.6, MUSTARD],                                    // meeting room corner
@@ -1347,7 +1510,59 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     deskPlant(world, dx + 0.72, 0.84, dz, succulent++);
   }
   deskPlant(world, 1.8, 0.84, 14.3, succulent++);                 // reception desk
-  deskPlant(world, -16.8, 0.84, 14.2, succulent++);               // waiting-area table
+
+  // ---- luxury lounge on the left side of the office ---------------------------------
+  {
+    // place a piece of furniture and register its seats in world space
+    const piece = (x: number, z: number, rotY: number, build: (g: THREE.Group) => SeatSpot[] | void) => {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      g.rotation.y = rotY;
+      const spots = build(g) || [];
+      world.add(g);
+      for (const sp of spots) {
+        seats.push({
+          x: x + sp.lx * Math.cos(rotY) + sp.lz * Math.sin(rotY),
+          z: z - sp.lx * Math.sin(rotY) + sp.lz * Math.cos(rotY),
+          top: sp.top,
+          yaw: rotY,
+        });
+      }
+      return g;
+    };
+
+    tiledFloor(world, 13.2, 17, -17.9, 11.9, '#efe2cc');                       // warm marble floor
+    // rug: gold border, wine field, lighter inner panel (flat, so no shadows of its own)
+    for (const [w, d, c, y] of [[10.4, 8.4, GOLD, 0.05], [10, 8, VELVET_WINE, 0.07], [8.6, 6.6, '#8e2a3a', 0.09]] as [number, number, string, number][]) {
+      box(world, w, 0.01, d, c, -18.2, y, 9.6).userData.noCastShadow = true;
+    }
+
+    // fireplace on the lunch room wall, sofa and armchairs gathered round a marble table
+    piece(-17.75, 3.4, 0, (g) => fireplace(g));
+    piece(-21.6, 9.6, Math.PI / 2, (g) => chesterfield(g, 3.4, VELVET_GREEN));  // faces +x
+    piece(-15.2, 8.2, -Math.PI / 2, (g) => wingback(g, VELVET_NAVY));           // face -x
+    piece(-15.2, 11.0, -Math.PI / 2, (g) => wingback(g, VELVET_NAVY));
+    piece(-18.4, 9.6, 0, (g) => marbleTable(g, 0.75, 0.45));
+    piece(-18.4, 7.2, 0, (g) => pouf(g, GOLD));
+    piece(-18.4, 12.0, Math.PI, (g) => pouf(g, GOLD));
+    chandelier(world, WALL_H, -18.4, 9.6);
+
+    // reading corner by the window: chaise longue and a lamp
+    piece(-21.3, 16.4, Math.PI / 2, (g) => chaise(g, VELVET_WINE));
+    piece(-22.6, 14.4, 0, (g) => floorLamp(g));
+    piece(-22.6, 5.8, 0, (g) => floorLamp(g));
+
+    // pair of egg chairs facing each other over a small table
+    piece(-15.6, 16.2, Math.PI / 2, (g) => eggChair(g, VELVET_GREEN));
+    piece(-12.6, 16.2, -Math.PI / 2, (g) => eggChair(g, VELVET_NAVY));
+    piece(-14.1, 16.2, 0, (g) => marbleTable(g, 0.35, 0.55));
+
+    piece(-12.4, 6.2, -Math.PI / 2, (g) => barCart(g));
+    addPlant(world, -23.4, 19.8, GREY_DARK, 'palm');
+    addPlant(world, -12.2, 19.6, GREY_DARK, 'fig');
+    addPlant(world, -23.4, 3.9, GREY_DARK, 'monstera');
+    sign('LUXURY LOUNGE', '#1d1d22', -18.2, 13.6);
+  }
 
   // ---- hanging signs ---------------------------------------------------------
   front.meeting.push(sign('MEETING ROOM', '#d89a12', -16.5, -13.4));
