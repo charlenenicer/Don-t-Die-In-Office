@@ -1,5 +1,5 @@
 import type { Character } from './types';
-import { formatClock } from './types';
+import { formatClock, hoursUntilReview, DAY_NAMES, REVIEW_HOUR } from './types';
 import { GameEngine } from './game-engine';
 import { getFirstMessage } from './characters';
 
@@ -151,7 +151,7 @@ export class VoiceClient {
         accept: {
           immediate: { performance: 10, energy: -15 },
           delayed: { burnout: 10 },
-          delayTurns: 2,
+          delayHours: 2,
         },
         decline: {
           immediate: { reputation: -5 },
@@ -175,7 +175,7 @@ export class VoiceClient {
         accept: {
           immediate: { performance: 5 },
           delayed: { performance: -15, reputation: -10 },
-          delayTurns: 3,
+          delayHours: 3,
         },
         decline: {
           immediate: { },
@@ -207,7 +207,7 @@ export class VoiceClient {
         accept: {
           immediate: { reputation: 3 },
           delayed: { reputation: -5 },
-          delayTurns: 4,
+          delayHours: 4,
         },
         decline: {
           immediate: { },
@@ -216,7 +216,11 @@ export class VoiceClient {
     };
 
     const offer = offers[character.archetype];
-    if (offer) {
+    if (offer && this.engine.hasOfferedToday(character.id)) {
+      window.dispatchEvent(new CustomEvent('toast', {
+        detail: `${character.name} already asked you for something today\nOne offer per person per day`,
+      }));
+    } else if (offer) {
       this.engine.presentChoice({
         id: `demo-${character.id}-${Date.now()}`,
         characterId: character.id,
@@ -240,8 +244,10 @@ export class VoiceClient {
     const memory = this.engine.getMemorySummary(this.currentCharacter.id);
 
     // Build context
+    const reviewIn = Math.round(hoursUntilReview(state.dayNumber, state.dayTime));
     const context = [
-      `Day ${state.dayNumber}, ${formatClock(state.dayTime)}`,
+      `${DAY_NAMES[state.dayNumber - 1] ?? `Day ${state.dayNumber}`}, ${formatClock(state.dayTime)}`,
+      `The player's performance review with the boss is ${DAY_NAMES[DAY_NAMES.length - 1]} at ${REVIEW_HOUR}:00, ${reviewIn} work hours from now`,
       `Stats: Energy ${state.stats.energy}, Reputation ${state.stats.reputation}, Performance ${state.stats.performance}, Burnout ${state.stats.burnout}`,
       `Level: ${state.level}`,
       state.inventory.length > 0 ? `Items: ${state.inventory.map(i => i.name).join(', ')}` : '',

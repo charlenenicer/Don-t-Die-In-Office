@@ -1,5 +1,14 @@
 import { Game } from './game';
-import { formatClock } from './types';
+import { formatClock, hoursUntilReview, DAY_NAMES, GAME_HOURS_PER_REAL_SECOND, PROMOTION_THRESHOLD } from './types';
+import type { GameState, ReviewOutcome } from './types';
+import { meetsPromotionBar } from './game-engine';
+
+const OUTCOME_TITLES: Record<ReviewOutcome, string> = {
+  promoted: 'Promoted!',
+  kept: 'Kept On',
+  pip: 'Improvement Plan',
+  burnout: 'Burned Out',
+};
 import './style.css';
 
 class App {
@@ -12,6 +21,8 @@ class App {
   private hintElement: HTMLElement | null = null;
   private gameOverModal: HTMLElement | null = null;
   private modeIndicator: HTMLElement | null = null;
+  /** whether the stats met the promotion bar at the last update, to toast when that changes */
+  private wasOnTrack = false;
 
   constructor() {
     this.init();
@@ -65,8 +76,9 @@ class App {
           </div>
 
           <div class="time-panel">
-            <div class="day">Day 1</div>
+            <div class="day">${DAY_NAMES[0]}</div>
             <div class="time">9:00</div>
+            <div class="review-countdown"></div>
             <div class="level">Junior</div>
             <div class="location">Reception</div>
           </div>
@@ -102,8 +114,9 @@ class App {
 
         <div class="game-over-modal hidden">
           <div class="game-over-content">
-            <h2>Game Over</h2>
+            <h2 class="game-over-title">Game Over</h2>
             <p class="game-over-reason"></p>
+            <div class="game-over-stats"></div>
             <button class="restart-button">Restart</button>
           </div>
         </div>
@@ -153,6 +166,7 @@ class App {
     });
 
     document.querySelector('.restart-button')?.addEventListener('click', () => {
+      this.wasOnTrack = false;
       this.game?.getEngine().reset();
       this.gameOverModal?.classList.add('hidden');
     });
@@ -162,11 +176,11 @@ class App {
     });
   }
 
-  private updateUI(state: any) {
+  private updateUI(state: GameState) {
     // Update stats
     const stats = ['energy', 'reputation', 'performance', 'burnout'];
     stats.forEach(stat => {
-      const value = state.stats[stat];
+      const value = state.stats[stat as keyof GameState['stats']];
       const fill = this.statsElement?.querySelector(`.stat-fill.${stat}`) as HTMLElement;
       const valueEl = fill?.parentElement?.nextElementSibling as HTMLElement;
       
@@ -176,8 +190,9 @@ class App {
 
     // Update time
     if (this.timeElement) {
-      this.timeElement.querySelector('.day')!.textContent = `Day ${state.dayNumber}`;
+      this.timeElement.querySelector('.day')!.textContent = DAY_NAMES[state.dayNumber - 1] ?? `Day ${state.dayNumber}`;
       this.timeElement.querySelector('.time')!.textContent = formatClock(state.dayTime);
+      this.timeElement.querySelector('.review-countdown')!.textContent = this.reviewCountdown(state);
       this.timeElement.querySelector('.level')!.textContent = state.level.charAt(0).toUpperCase() + state.level.slice(1);
     }
 
@@ -197,9 +212,18 @@ class App {
       this.choiceModal?.classList.add('hidden');
     }
 
+    // Crossing the promotion bar no longer ends the game; tell the player to hold it until Friday
+    const onTrack = meetsPromotionBar(state.stats);
+    if (onTrack !== this.wasOnTrack && !state.isGameOver) {
+      this.showToast(onTrack
+        ? 'Strong candidate for promotion\nHold your stats until the Friday review'
+        : 'Slipped below the promotion bar\nPerformance 70 and Reputation 60 by Friday');
+    }
+    this.wasOnTrack = onTrack;
+
     // Show game over
     if (state.isGameOver) {
-      this.showGameOver(state.gameOverReason);
+      this.showGameOver(state);
     }
 
     // Show transcript when in call
@@ -255,9 +279,23 @@ class App {
     this.choiceModal!.querySelector('.choice-description')!.textContent = choice.description;
   }
 
-  private showGameOver(reason: string) {
+  /** "Review in 32 min" in real time, since the whole run is under an hour */
+  private reviewCountdown(state: GameState): string {
+    if (state.isGameOver) return 'Review over';
+    const minutes = Math.ceil(hoursUntilReview(state.dayNumber, state.dayTime) / GAME_HOURS_PER_REAL_SECOND / 60);
+    return minutes <= 1 ? 'Review starting' : `Review in ${minutes} min`;
+  }
+
+  private showGameOver(state: GameState) {
     this.gameOverModal?.classList.remove('hidden');
-    this.gameOverModal!.querySelector('.game-over-reason')!.textContent = reason;
+    this.gameOverModal!.querySelector('.game-over-title')!.textContent =
+      state.outcome ? OUTCOME_TITLES[state.outcome] : 'Game Over';
+    this.gameOverModal!.querySelector('.game-over-reason')!.textContent = state.gameOverReason ?? '';
+    const bar = PROMOTION_THRESHOLD.junior;
+    const { performance, reputation, burnout } = state.stats;
+    const day = DAY_NAMES[state.dayNumber - 1] ?? `Day ${state.dayNumber}`;
+    this.gameOverModal!.querySelector('.game-over-stats')!.textContent =
+      `Performance ${Math.round(performance)}/${bar.performance} · Reputation ${Math.round(reputation)}/${bar.reputation} · Burnout ${Math.round(burnout)} · ended ${day} ${formatClock(state.dayTime)}`;
   }
 
   private addTranscriptLine(role: string, text: string) {
