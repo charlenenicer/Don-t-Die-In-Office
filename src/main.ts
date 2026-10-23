@@ -68,6 +68,7 @@ class App {
             <div class="day">Day 1</div>
             <div class="time">9:00</div>
             <div class="level">Junior</div>
+            <div class="location">Reception</div>
           </div>
 
           <div class="inventory-panel">
@@ -223,6 +224,9 @@ class App {
 
   private refreshHint() {
     if (!this.hintElement || !this.game) return;
+    const location = this.timeElement?.querySelector('.location');
+    const place = this.game.getLocationName();
+    if (location && location.textContent !== place) location.textContent = place;
     const nearbyChar = this.game.getNearbyCharacter();
     const nearbyItem = this.game.getNearbyItem();
 

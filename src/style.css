@@ -168,6 +168,18 @@ body {
   text-transform: uppercase;
 }
 
+/* where the player is: the room or area of the floor */
+.location {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: #2b2d33;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .inventory-panel {
   min-width: 200px;
 }

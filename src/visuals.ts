@@ -419,8 +419,8 @@ const VELVET_WINE = '#7a1f2e';
 const DARK_WOOD = '#4a2e1f';
 const MARBLE = '#f4f1ec';
 
-/** Where someone sits on a piece of furniture, in its own coordinates (facing +z). */
-interface SeatSpot { lx: number; lz: number; top: number }
+/** Where someone sits on a piece of furniture, in its own coordinates (facing +z unless `yaw` turns them). */
+interface SeatSpot { lx: number; lz: number; top: number; yaw?: number }
 
 /** Tufted Chesterfield: rolled arms, buttoned back, wooden bun feet. Faces +z. */
 function chesterfield(parent: THREE.Object3D, w: number, color: string): SeatSpot[] {
@@ -573,6 +573,49 @@ function fireplace(parent: THREE.Object3D) {
   flame(-0.25, 0.4, '#f08a1c'); flame(0, 0.55, '#f2c230'); flame(0.24, 0.42, '#f08a1c');
   flame(-0.1, 0.3, '#ffe9a8'); flame(0.12, 0.32, '#ffe9a8');
   for (const lx of [-1.1, -0.9, 1.0]) cyl(parent, 0.04, 0.04, 0.22, '#f6efe0', lx, 1.51, 0.05, 10); // candles
+}
+
+/**
+ * A phone call booth: charcoal frame, glass sides and door, a felt acoustic back
+ * wall, a shelf with a laptop and desk phone, a seat, a ceiling light and a
+ * "free" light on the roof. The door faces +z; you sit facing the shelf.
+ */
+function phoneBooth(parent: THREE.Object3D, felt: string): SeatSpot[] {
+  const frame = '#2b2d33';
+  const glass = new THREE.MeshStandardMaterial({ color: '#cfe8f7', transparent: true, opacity: 0.22, roughness: 0.05 });
+  const pane = (w: number, h: number, d: number, x: number, y: number, z: number) => {
+    const m = add_(parent, new THREE.Mesh(new THREE.BoxGeometry(w, h, d), glass), x, y, z);
+    m.userData.noCastShadow = true;
+    return m;
+  };
+  box(parent, 1.3, 0.08, 1.3, frame, 0, 0.04, 0);                             // plinth
+  box(parent, 1.36, 0.12, 1.36, frame, 0, 2.42, 0);                           // roof
+  for (const x of [-0.63, 0.63]) for (const z of [-0.63, 0.63]) box(parent, 0.06, 2.36, 0.06, frame, x, 1.2, z); // corner posts
+  box(parent, 1.2, 2.28, 0.06, felt, 0, 1.2, -0.62);                          // felt back wall
+  for (let i = 0; i < 5; i++) box(parent, 0.02, 2.0, 0.02, '#1b1c20', -0.48 + i * 0.24, 1.2, -0.585); // felt grooves
+  for (const x of [-0.63, 0.63]) pane(0.03, 2.2, 1.2, x, 1.2, 0);             // glass sides
+  pane(1.16, 2.2, 0.03, 0, 1.2, 0.63);                                         // glass door
+  box(parent, 0.03, 0.5, 0.05, '#cfd3d8', 0.48, 1.15, 0.67);                  // door handle
+  box(parent, 1.2, 0.05, 0.05, frame, 0, 2.31, 0.63);                         // door frame top
+  // inside: shelf with a laptop and a desk phone, and a seat
+  box(parent, 0.95, 0.04, 0.3, '#b8864f', 0, 1.0, -0.44);
+  box(parent, 0.34, 0.02, 0.24, '#cfd3d8', -0.18, 1.03, -0.42);               // laptop base
+  const screen = box(parent, 0.34, 0.22, 0.015, '#26292f', -0.18, 1.14, -0.54);
+  screen.rotation.x = -0.25;
+  box(parent, 0.3, 0.18, 0.005, '#a8d4f0', -0.18, 1.14, -0.531).rotation.x = -0.25;
+  box(parent, 0.2, 0.06, 0.16, '#c8341f', 0.24, 1.05, -0.44);                 // desk phone
+  const receiver = cyl(parent, 0.025, 0.025, 0.2, '#c8341f', 0.24, 1.1, -0.44, 8);
+  receiver.rotation.z = Math.PI / 2;
+  cyl(parent, 0.22, 0.22, 0.08, felt, 0, 0.5, 0.05, 20);                      // seat cushion
+  cyl(parent, 0.04, 0.04, 0.42, '#8b929b', 0, 0.25, 0.05, 10);
+  // ceiling light inside and a "free" light on the roof
+  const light = add_(parent, new THREE.Mesh(new THREE.CircleGeometry(0.2, 20), new THREE.MeshBasicMaterial({ color: '#fff3c4' })), 0, 2.355, 0);
+  light.rotation.x = Math.PI / 2;
+  add_(parent, new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 8), new THREE.MeshBasicMaterial({ color: '#4ac27a' })), 0.5, 2.52, 0.5);
+  const label = makeSign('CALL BOOTH', '#2b2d33', 1.0, 0.18, false);
+  label.position.set(0, 2.42, 0.69);
+  parent.add(label);
+  return [{ lx: 0, lz: 0.05, top: 0.55, yaw: Math.PI }];                      // face the shelf at the back
 }
 
 /** Gold bar cart with bottles and glasses. */
@@ -1094,6 +1137,11 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   const addWall = (alongX: boolean, fixed: number, wallColor: string, pierColor: string) => {
     const len = 52;
     const t = 0.7;
+    const before = world.children.length;
+    // the outer walls are solid, and can be cut away like any other wall when the
+    // camera ends up behind one (e.g. the player standing against the front windows)
+    if (alongX) solid(0, fixed, len, t);
+    else solid(fixed, 0, t, len);
     const at = (along: number, y: number) => (alongX ? [along, y, fixed] : [fixed, y, along]) as [number, number, number];
     const size = (l: number, h: number): [number, number, number] => (alongX ? [l, h, t] : [t, h, l]);
     box(world, ...size(len, 1.0), wallColor, ...at(0, 0.5));
@@ -1107,6 +1155,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     const inward = fixed > 0 ? -1 : 1;
     const bb = alongX ? [len - 1, 0.18, 0.1] : [0.1, 0.18, len - 1];
     box(world, ...(bb as [number, number, number]), '#f5f0e0', ...(alongX ? [0, 0.09, fixed + inward * 0.38] : [fixed + inward * 0.38, 0.09, 0]) as [number, number, number]);
+    for (let i = before; i < world.children.length; i++) allWalls.push(world.children[i]);
   };
   addWall(true, -25, WALL_GREY, WALL_GREY);
   addWall(true, 25, WALL_GREY, WALL_GREY);
@@ -1525,7 +1574,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
           x: x + sp.lx * Math.cos(rotY) + sp.lz * Math.sin(rotY),
           z: z - sp.lx * Math.sin(rotY) + sp.lz * Math.cos(rotY),
           top: sp.top,
-          yaw: rotY,
+          yaw: rotY + (sp.yaw ?? 0),
         });
       }
       return g;
@@ -1558,6 +1607,12 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     piece(-14.1, 16.2, 0, (g) => marbleTable(g, 0.35, 0.55));
 
     piece(-12.4, 6.2, -Math.PI / 2, (g) => barCart(g));
+
+    // phone call booths along the front windows; glass doors face the camera so
+    // you can see in, felt backs face the lounge
+    piece(-19.6, 18.7, 0, (g) => phoneBooth(g, VELVET_GREEN));
+    piece(-17.8, 18.7, 0, (g) => phoneBooth(g, VELVET_NAVY));
+    piece(-16.0, 18.7, 0, (g) => phoneBooth(g, VELVET_WINE));
     addPlant(world, -23.4, 19.8, GREY_DARK, 'palm');
     addPlant(world, -12.2, 19.6, GREY_DARK, 'fig');
     addPlant(world, -23.4, 3.9, GREY_DARK, 'monstera');
@@ -1636,6 +1691,18 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   onWall(painting('blocks', 1.4, 1.4), 8.5, 2.0, -19, 1, 0);
   onWall(makeNeon('Coffee First', NEON_PINK, 0.8), -11, 3.2, 0.75, -1, 0);
   onWall(makeNeon('Do It Now', NEON_CYAN, 0.8), 11, 3.2, 0.75, 1, 0);
+
+  // ---- room name plates: above every doorway, plus the camera-facing wall of the
+  // lunch and copy rooms (whose doors face sideways). They hang on their wall, so they
+  // hide with it when you step inside.
+  const plate = (text: string, color: string) => makeSign(text, color, 3.4, 0.66, false);
+  onWall(plate('MEETING ROOM', '#d89a12'), -15.5, 3.85, -13, 0, 1);
+  onWall(plate("MANAGER'S OFFICE", '#2f6fdb'), 0, 3.85, -13, 0, 1);
+  onWall(plate("BOSS'S OFFICE", '#c8341f'), 16, 3.85, -13, 0, 1);
+  onWall(plate('LUNCH ROOM', '#2f9e4f'), -11, 3.85, -4, 1, 0);
+  onWall(plate('LUNCH ROOM', '#2f9e4f'), -13.5, 3.9, 3, 0, 1);
+  onWall(plate('COPY ROOM', '#7a4cb8'), 11, 3.85, -4, -1, 0);
+  onWall(plate('COPY ROOM', '#7a4cb8'), 17.5, 3.9, 3, 0, 1);
 
   buildHighriseView(world, rand);
 
