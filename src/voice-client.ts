@@ -138,12 +138,14 @@ export class VoiceClient {
     this.addTranscript('agent', firstMessage);
     
     // Simulate offers based on character archetype
+    // The opener may already have triggered the offer through keyword detection
     setTimeout(() => {
-      this.createDemoOffer(character);
+      if (!this.offerPresented) this.createDemoOffer(character);
+      this.endDemoCall();
     }, 2000);
   }
 
-  private createDemoOffer(character: Character, endAfter = true) {
+  private createDemoOffer(character: Character) {
     const offers: Record<string, any> = {
       flatterer: {
         title: 'Weekend Sprint',
@@ -227,10 +229,9 @@ export class VoiceClient {
         ...offer,
       });
     }
+  }
 
-    if (!endAfter) return;
-
-    // End demo call after offer
+  private endDemoCall() {
     setTimeout(() => {
       this.addTranscript('agent', 'Alright, talk to you later.');
       setTimeout(() => this.endCall(), 1000);
@@ -413,7 +414,7 @@ export class VoiceClient {
     if (role === 'agent' && !this.offerPresented && this.currentCharacter) {
       if (this.detectOfferIntent(text, this.currentCharacter)) {
         this.offerPresented = true;
-        this.createDemoOffer(this.currentCharacter, false);
+        this.createDemoOffer(this.currentCharacter);
       }
     }
     
@@ -484,7 +485,7 @@ export class VoiceClient {
     this.offerPresented = false;
 
     if (shouldPresentFallback) {
-      this.createDemoOffer(voiceCharacter!, false);
+      this.createDemoOffer(voiceCharacter!);
     }
   }
 
