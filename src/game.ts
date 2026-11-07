@@ -12,8 +12,10 @@ import { GAME_HOURS_PER_REAL_SECOND } from './types';
 const WORLD_LIMIT = 24.2;
 import { VoiceClient } from './voice-client';
 import {
-  FOG_COLOR, buildWorld, createSkyTexture, roomAt,
+  FIRE_INTENSITY, FOG_COLOR, buildWorld, createSkyTexture, roomAt,
 } from './visuals';
+import { flicker, setupLighting } from './lighting';
+import type { Lighting } from './lighting';
 import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
 import type { CharacterRig } from './people';
 import { PICKUP_CLEARANCE, createPickup } from './pickups';
@@ -31,7 +33,8 @@ export class Game {
   
   private player: THREE.Group;
   private playerRig: CharacterRig;
-  private sun: THREE.DirectionalLight;
+  private lighting: Lighting;
+  private fireLight: THREE.PointLight;
   private walkAmount = 0;
   private colliders: Collider[] = [];
   private clockAccumulator = 0;
@@ -100,22 +103,7 @@ export class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (!canvas) container.appendChild(this.renderer.domElement);
 
-    // Lighting - bright sun with soft shadows, sky fill from above
-    this.scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x9a8a5c, 1.1));
-
-    this.sun = new THREE.DirectionalLight(0xfff0d2, 2.6);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    const shadowCam = this.sun.shadow.camera;
-    shadowCam.left = -24;
-    shadowCam.right = 24;
-    shadowCam.top = 24;
-    shadowCam.bottom = -24;
-    shadowCam.near = 1;
-    shadowCam.far = 90;
-    this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.04;
-    this.scene.add(this.sun, this.sun.target);
+    this.lighting = setupLighting(this.renderer, this.scene);
 
     // Build the office and the landscape around it
     const world = buildWorld(this.scene);
@@ -124,6 +112,7 @@ export class Game {
     this.rooms = world.rooms;
     this.walls = world.walls;
     this.activities = world.activities;
+    this.fireLight = world.fireLight;
     this.createSeatMarkers();
 
     // Create player
@@ -138,6 +127,9 @@ export class Game {
     
     // Create items
     this.createItems();
+
+    // Same bounce light on every material, and labels/glows exempt from tone mapping
+    this.lighting.applyEnvironment(this.scene);
 
     // Input
     this.setupInput();
@@ -386,9 +378,9 @@ export class Game {
     this.camera.position.lerp(camTarget, Math.min(1, delta * 5));
     this.camera.lookAt(this.playerPosition.x, 1.3, this.playerPosition.z - 1);
 
-    // Sun and its shadow box follow the player
-    this.sun.position.set(this.playerPosition.x + 14, 26, this.playerPosition.z + 10);
-    this.sun.target.position.set(this.playerPosition.x, 0, this.playerPosition.z);
+    // The key light and its shadow box follow the player; the fire flickers
+    this.lighting.follow(this.playerPosition);
+    flicker(this.fireLight, FIRE_INTENSITY, performance.now() / 1000);
 
     // Rooms hide their contents until you're there; then check what you can reach
     this.updateRooms();

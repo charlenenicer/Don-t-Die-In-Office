@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { dartPoints } from './activities';
+import { lampLight } from './lighting';
 
 // Look inspired by Big Walk (House House): chunky round characters with
 // mismatched saturated parts, bold flat-colored architecture, a naturalistic
@@ -705,7 +706,12 @@ export interface ActivitySpot {
   result?: () => string;
 }
 
+/** Base brightness of the fireplace glow, before flicker. */
+export const FIRE_INTENSITY = 12;
+
 export interface WorldData {
+  /** the fireplace's light, for flickering */
+  fireLight: THREE.PointLight;
   colliders: Collider[];
   seats: Seat[];
   rooms: Room[];
@@ -1001,6 +1007,7 @@ function buildHighriseView(world: THREE.Group, rand: () => number) {
 }
 
 export function buildWorld(scene: THREE.Scene): WorldData {
+  let fireLight!: THREE.PointLight;
   const world = new THREE.Group();
   const rand = mulberry32(42);
   const colliders: Collider[] = [];
@@ -1588,6 +1595,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
 
     // fireplace on the lunch room wall, sofa and armchairs gathered round a marble table
     piece(-17.75, 3.4, 0, (g) => fireplace(g));
+    fireLight = lampLight(world, -17.75, 0.8, 4.3, FIRE_INTENSITY, 9, 0xff9a4a);
     piece(-21.6, 9.6, Math.PI / 2, (g) => chesterfield(g, 3.4, VELVET_GREEN));  // faces +x
     piece(-15.2, 8.2, -Math.PI / 2, (g) => wingback(g, VELVET_NAVY));           // face -x
     piece(-15.2, 11.0, -Math.PI / 2, (g) => wingback(g, VELVET_NAVY));
@@ -1595,6 +1603,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     piece(-18.4, 7.2, 0, (g) => pouf(g, GOLD));
     piece(-18.4, 12.0, Math.PI, (g) => pouf(g, GOLD));
     chandelier(world, WALL_H, -18.4, 9.6);
+    lampLight(world, -18.4, WALL_H - 1.6, 9.6, 20, 12, 0xffd59a);
 
     // reading corner by the window: chaise longue and a lamp
     piece(-21.3, 16.4, Math.PI / 2, (g) => chaise(g, VELVET_WINE));
@@ -1639,6 +1648,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
       shade.userData.noCastShadow = true;
       const bulb = place(new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), new THREE.MeshBasicMaterial({ color: '#fff6c8' })), world, x, WALL_H - 1.05, z);
       bulb.userData.noCastShadow = true;
+      lampLight(world, x, WALL_H - 1.3, z);
     }
   }
 
@@ -1751,5 +1761,5 @@ export function buildWorld(scene: THREE.Scene): WorldData {
 
   scene.add(world);
   addClouds(scene);
-  return { colliders, seats, rooms, walls: allWalls, activities };
+  return { colliders, seats, rooms, walls: allWalls, activities, fireLight };
 }
