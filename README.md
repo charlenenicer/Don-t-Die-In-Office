@@ -4,6 +4,14 @@ A 3D office-politics survival game where you navigate manipulation, set boundari
 
 Built for a hackathon using the **Alebex Voice API**.
 
+![Open Plan playthrough: a new hire tours the office and talks to six coworkers, saying yes to most favors, no to skipping tests, and taking the mentor's advice to set boundaries](docs/media/playthrough.gif)
+
+You start your first day at a new job. Walk around the office, talk to coworkers, and decide which favors to accept. Some help your career. Others drain your energy. Make it to Friday's performance review without burning out.
+
+In this playthrough, a beginner says yes to almost everything: gossip, a weekend sprint, team lunch, and a late night. Energy drops and burnout starts to climb. They turn down the advice to skip testing, and the mentor tells them to set boundaries.
+
+[Watch the full-quality video (MP4, 76 s)](docs/media/playthrough.mp4)
+
 ## 🎮 The Game
 
 You're a new hire on an open-plan office floor. Your goal: survive and get promoted without burning out. Walk freely, talk by voice to coworkers and the boss, accept or decline their offers, and manage your stats.

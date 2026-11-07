@@ -4,10 +4,18 @@ import { CHARACTERS } from './characters';
 import { ITEMS } from './items';
 import type { Character, InventoryItem } from './types';
 import { GAME_HOURS_PER_REAL_SECOND } from './types';
+
+/**
+ * How far the player can go from the centre. The outer walls' inner faces are at
+ * 24.6 and have real collision; this is only a backstop just beyond that.
+ */
+const WORLD_LIMIT = 24.2;
 import { VoiceClient } from './voice-client';
 import {
-  FOG_COLOR, buildWorld, createSkyTexture, roomAt,
+  FIRE_INTENSITY, FOG_COLOR, buildWorld, createSkyTexture, roomAt,
 } from './visuals';
+import { flicker, setupLighting } from './lighting';
+import type { Lighting } from './lighting';
 import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
 import type { CharacterRig } from './people';
 import { PICKUP_CLEARANCE, createPickup } from './pickups';
@@ -25,7 +33,8 @@ export class Game {
   
   private player: THREE.Group;
   private playerRig: CharacterRig;
-  private sun: THREE.DirectionalLight;
+  private lighting: Lighting;
+  private fireLight: THREE.PointLight;
   private walkAmount = 0;
   private colliders: Collider[] = [];
   private clockAccumulator = 0;
@@ -94,22 +103,7 @@ export class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (!canvas) container.appendChild(this.renderer.domElement);
 
-    // Lighting - bright sun with soft shadows, sky fill from above
-    this.scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x9a8a5c, 1.1));
-
-    this.sun = new THREE.DirectionalLight(0xfff0d2, 2.6);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    const shadowCam = this.sun.shadow.camera;
-    shadowCam.left = -24;
-    shadowCam.right = 24;
-    shadowCam.top = 24;
-    shadowCam.bottom = -24;
-    shadowCam.near = 1;
-    shadowCam.far = 90;
-    this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.04;
-    this.scene.add(this.sun, this.sun.target);
+    this.lighting = setupLighting(this.renderer, this.scene);
 
     // Build the office and the landscape around it
     const world = buildWorld(this.scene);
@@ -118,6 +112,7 @@ export class Game {
     this.rooms = world.rooms;
     this.walls = world.walls;
     this.activities = world.activities;
+    this.fireLight = world.fireLight;
     this.createSeatMarkers();
 
     // Create player
@@ -132,6 +127,9 @@ export class Game {
     
     // Create items
     this.createItems();
+
+    // Same bounce light on every material, and labels/glows exempt from tone mapping
+    this.lighting.applyEnvironment(this.scene);
 
     // Input
     this.setupInput();
@@ -201,7 +199,7 @@ export class Game {
    */
   private clearSpotFor(x: number, z: number, room: Room | null): [number, number] {
     const clear = (px: number, pz: number) =>
-      Math.abs(px) <= 22 && pz >= -22 && pz <= 20.5 &&
+      Math.abs(px) <= WORLD_LIMIT && Math.abs(pz) <= WORLD_LIMIT &&
       roomAt(this.rooms, px, pz) === room &&
       this.colliders.every((c) => {
         const dx = px - Math.max(c.minX, Math.min(px, c.maxX));
@@ -335,8 +333,8 @@ export class Game {
         this.playerPosition.addScaledVector(direction, stepLength / steps);
 
         // Keep player in bounds
-        this.playerPosition.x = Math.max(-22, Math.min(22, this.playerPosition.x));
-        this.playerPosition.z = Math.max(-22, Math.min(20.5, this.playerPosition.z));
+        this.playerPosition.x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, this.playerPosition.x));
+        this.playerPosition.z = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, this.playerPosition.z));
 
         this.resolveCollisions();
       }
@@ -367,29 +365,27 @@ export class Game {
       spot.animate(active ? this.activity!.elapsed : 0, active, hand);
     }
 
-    // Update camera to follow player (smoothed, low third-person)
-    // Keep the camera inside the walls so it never ends up behind one
+    // Update camera to follow player (smoothed, low third-person). It stays inside the
+    // building, at least 5 units behind the player; close to the front windows that
+    // means backing out past the south wall, which is then cut away like any other
+    // wall between the camera and the player.
+    const pz = this.playerPosition.z;
     const camTarget = new THREE.Vector3(
-      Math.max(-23.5, Math.min(23.5, this.playerPosition.x)),
+      Math.max(-22.5, Math.min(22.5, this.playerPosition.x)), // a little in from the side walls so pillars don't fill the view
       5.5,
-      Math.min(23.5, this.playerPosition.z + 9.5)
+      Math.max(Math.min(23.5, pz + 9.5), pz + 5)
     );
     this.camera.position.lerp(camTarget, Math.min(1, delta * 5));
     this.camera.lookAt(this.playerPosition.x, 1.3, this.playerPosition.z - 1);
 
-    // Sun and its shadow box follow the player
-    this.sun.position.set(this.playerPosition.x + 14, 26, this.playerPosition.z + 10);
-    this.sun.target.position.set(this.playerPosition.x, 0, this.playerPosition.z);
+    // The key light and its shadow box follow the player; the fire flickers
+    this.lighting.follow(this.playerPosition);
+    flicker(this.fireLight, FIRE_INTENSITY, performance.now() / 1000);
 
     // Rooms hide their contents until you're there; then check what you can reach
     this.updateRooms();
     this.checkNearbyInteractables();
   }
-
-
-
-
-
 
   // ------------------------------------------------------------------ seats
 
@@ -476,7 +472,7 @@ export class Game {
 
   private isFree(x: number, z: number): boolean {
     const r = 0.45;
-    if (Math.abs(x) > 22 || z < -22 || z > 20.5) return false;
+    if (Math.abs(x) > WORLD_LIMIT || Math.abs(z) > WORLD_LIMIT) return false;
     return this.colliders.every((c) => {
       const dx = x - Math.max(c.minX, Math.min(x, c.maxX));
       const dz = z - Math.max(c.minZ, Math.min(z, c.maxZ));
@@ -597,6 +593,20 @@ export class Game {
   }
 
   /** What the player is doing right now, for the hint bar. */
+  /** Where the player is right now, for the HUD: a room, or an area of the open floor. */
+  getLocationName(): string {
+    const ROOM_NAMES: Record<string, string> = {
+      meeting: 'Meeting Room', manager: "Manager's Office", boss: "Boss's Office", lunch: 'Lunch Room', copy: 'Copy Room',
+    };
+    if (this.playerRoom) return ROOM_NAMES[this.playerRoom.id] ?? 'Office';
+    const { x, z } = this.playerPosition;
+    if (x < -11 && z > 3.2) return 'Luxury Lounge';
+    if (x > 13.5 && z > 3.2) return 'Fun Zone';
+    if (x > 6 && x <= 13.5 && z > 8.3 && z < 16.5) return 'TV Lounge';
+    if (Math.abs(x) < 4.5 && z > 12.5) return 'Reception';
+    return 'Open Office';
+  }
+
   getActivityAction(): string | null {
     return this.activity ? ACTIVITY_RULES[this.activity.spot.id].action : null;
   }

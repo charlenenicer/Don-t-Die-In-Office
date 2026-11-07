@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GameEngine } from '../src/game-engine';
 import type { Choice } from '../src/types';
-import { GAME_HOURS_PER_REAL_SECOND, REAL_MINUTES_PER_DAY, formatClock } from '../src/types';
+import { GAME_HOURS_PER_REAL_SECOND, REAL_MINUTES_PER_DAY, formatClock, hoursUntilReview } from '../src/types';
 
 describe('GameEngine', () => {
   let engine: GameEngine;
@@ -46,7 +46,7 @@ describe('GameEngine', () => {
       accept: {
         immediate: { performance: 10, energy: -15 },
         delayed: { burnout: 10 },
-        delayTurns: 2,
+        delayHours: 2,
       },
       decline: {
         immediate: { reputation: -5 },
@@ -68,19 +68,34 @@ describe('GameEngine', () => {
       
       let state = engine.getState();
       expect(state.pendingEffects.length).toBe(1);
-      expect(state.pendingEffects[0].turnsRemaining).toBe(2);
-      
-      // Advance to next day (effects decrement on new day)
-      engine.advanceTime(15); // Trigger new day (dayTime >= 24)
+      expect(state.pendingEffects[0].hoursRemaining).toBe(2);
+
+      // Delayed effects count down in in-game hours
+      engine.tickClock(1);
       state = engine.getState();
-      expect(state.pendingEffects[0].turnsRemaining).toBe(1);
-      
-      // Advance to second new day
-      engine.advanceTime(15); // Trigger another new day
+      expect(state.pendingEffects[0].hoursRemaining).toBe(1);
+      expect(state.stats.burnout).toBe(0);
+
+      engine.tickClock(1);
       state = engine.getState();
       expect(state.pendingEffects.length).toBe(0);
-      // Burnout should have the delayed +10
-      expect(state.stats.burnout).toBeGreaterThanOrEqual(10);
+      expect(state.stats.burnout).toBe(10);
+    });
+
+    it('should allow one offer per character per day', () => {
+      expect(engine.presentChoice(testChoice)).toBe(true);
+      engine.declineChoice();
+      expect(engine.presentChoice(testChoice)).toBe(false);
+      expect(engine.getState().activeChoice).toBeNull();
+
+      // another character can still make an offer
+      expect(engine.presentChoice({ ...testChoice, characterId: 'mentor' })).toBe(true);
+      engine.declineChoice();
+
+      // the next morning the slot is back
+      engine.tickClock(9);
+      expect(engine.getState().dayNumber).toBe(2);
+      expect(engine.presentChoice(testChoice)).toBe(true);
     });
 
     it('should apply decline effects', () => {
@@ -93,13 +108,13 @@ describe('GameEngine', () => {
   });
 
   describe('Real-time clock', () => {
-    it('should make one day last 30 real minutes', () => {
-      expect(REAL_MINUTES_PER_DAY).toBe(30);
-      engine.tickClock(GAME_HOURS_PER_REAL_SECOND * 60 * 15);
+    it('should make one day last 15 real minutes', () => {
+      expect(REAL_MINUTES_PER_DAY).toBe(15);
+      engine.tickClock(GAME_HOURS_PER_REAL_SECOND * 60 * 7.5);
       expect(engine.getState().dayTime).toBeCloseTo(9 + 4.5, 5);
 
-      // another 15 minutes finishes the day and starts day 2
-      engine.tickClock(GAME_HOURS_PER_REAL_SECOND * 60 * 15);
+      // another 7.5 minutes finishes the day and starts day 2
+      engine.tickClock(GAME_HOURS_PER_REAL_SECOND * 60 * 7.5);
       const state = engine.getState();
       expect(state.dayNumber).toBe(2);
       expect(state.dayTime).toBe(9);
@@ -168,24 +183,80 @@ describe('GameEngine', () => {
     });
   });
 
-  describe('Promotion', () => {
-    it('should promote from junior to mid with sufficient stats', () => {
-      engine.updateStats({ 
-        performance: 20, 
-        reputation: 10 
-      });
-      
-      const state = engine.getState();
-      expect(state.level).toBe('mid');
-      // Note: game over happens async after 2 seconds, so we just check the level
+  describe('Friday review', () => {
+    /** Run the clock up to Friday 17:00 one in-game hour at a time. */
+    const playToReview = () => {
+      for (let i = 0; i < 40 && !engine.getState().isGameOver; i++) engine.tickClock(1);
+    };
+
+    it('should fit the whole week in under an hour of real time', () => {
+      const hours = hoursUntilReview(1, 9);
+      expect(hours).toBe(26);
+      const realMinutes = hours / GAME_HOURS_PER_REAL_SECOND / 60;
+      expect(realMinutes).toBeGreaterThan(40);
+      expect(realMinutes).toBeLessThan(50);
     });
 
-    it('should not promote with insufficient stats', () => {
-      engine.updateStats({ performance: 15 });
-      
+    it('should not end the game when the promotion bar is crossed early', () => {
+      engine.updateStats({ performance: 20, reputation: 10 });
       const state = engine.getState();
       expect(state.level).toBe('junior');
       expect(state.isGameOver).toBe(false);
+    });
+
+    it('should hold the review at 17:00 on Friday', () => {
+      engine.tickClock(9); // Thursday
+      engine.tickClock(9); // Friday
+      expect(engine.getState().dayNumber).toBe(3);
+      engine.tickClock(7.5);
+      expect(engine.getState().isGameOver).toBe(false);
+      engine.tickClock(0.5);
+      const state = engine.getState();
+      expect(state.isGameOver).toBe(true);
+      expect(state.dayTime).toBe(17);
+    });
+
+    it('should promote when both stats meet the bar', () => {
+      engine.updateStats({ performance: 20, reputation: 10 });
+      playToReview();
+      const state = engine.getState();
+      expect(state.outcome).toBe('promoted');
+      expect(state.level).toBe('mid');
+    });
+
+    it('should keep you on when only one stat meets the bar', () => {
+      engine.updateStats({ performance: 25 });
+      playToReview();
+      const state = engine.getState();
+      expect(state.outcome).toBe('kept');
+      expect(state.gameOverReason).toContain('Reputation');
+    });
+
+    it('should put you on an improvement plan when neither stat meets the bar', () => {
+      playToReview();
+      expect(engine.getState().outcome).toBe('pip');
+    });
+
+    it('should land every pending consequence before scoring', () => {
+      engine.updateStats({ performance: 20, reputation: 10 });
+      engine.tickClock(9);
+      engine.tickClock(9);
+      engine.tickClock(7); // Friday 16:00
+      engine.presentChoice({
+        id: 'gossip', characterId: 'gossip', title: 'Gossip', description: '',
+        accept: { immediate: {}, delayed: { reputation: -5 }, delayHours: 4 },
+        decline: { immediate: {} },
+      });
+      engine.acceptChoice();
+      engine.tickClock(1);
+      const state = engine.getState();
+      expect(state.stats.reputation).toBe(55);
+      expect(state.outcome).toBe('kept');
+    });
+
+    it('should still end early on burnout', () => {
+      engine.updateStats({ burnout: 100 });
+      expect(engine.getState().outcome).toBe('burnout');
     });
   });
 

@@ -1,5 +1,11 @@
-import type { GameStats, GameState, Choice, InventoryItem, Character } from './types';
-import { INITIAL_STATS, PROMOTION_THRESHOLD, WORK_HOURS } from './types';
+import type { GameStats, GameState, Choice, InventoryItem, ReviewOutcome } from './types';
+import { INITIAL_STATS, PROMOTION_THRESHOLD, WORK_HOURS, REVIEW_DAY, REVIEW_HOUR } from './types';
+
+/** True when the stats would earn a promotion if the review happened now. */
+export function meetsPromotionBar(stats: GameStats): boolean {
+  return stats.performance >= PROMOTION_THRESHOLD.junior.performance &&
+    stats.reputation >= PROMOTION_THRESHOLD.junior.reputation;
+}
 
 export class GameEngine {
   private state: GameState;
@@ -16,6 +22,7 @@ export class GameEngine {
       activeChoice: null,
       characterMemories: new Map(),
       pendingEffects: [],
+      offeredToday: [],
     };
   }
 
@@ -46,36 +53,22 @@ export class GameEngine {
     this.state.stats = newStats;
 
     // Check burnout
-    if (this.state.stats.burnout >= 100) {
-      this.endGame('Burnout. You pushed too hard. Remember: sustainable pace beats heroic sprints.');
+    if (this.state.stats.burnout >= 100 && !this.state.isGameOver) {
+      this.endGame('Burnout. You pushed too hard. Remember: sustainable pace beats heroic sprints.', 'burnout');
       return;
     }
 
-    // Check promotion
-    this.checkPromotion();
+    // Promotion is decided at the Friday review, not the moment the bar is crossed
     this.notify();
-  }
-
-  private checkPromotion() {
-    const { stats, level } = this.state;
-    
-    if (level === 'junior' && 
-        stats.performance >= PROMOTION_THRESHOLD.junior.performance &&
-        stats.reputation >= PROMOTION_THRESHOLD.junior.reputation) {
-      this.state.level = 'mid';
-      this.updateStats({ reputation: 10 });
-      
-      // Mark characters as post-promotion for behavior changes
-      this.state.characterMemories.set('promotion_happened', ['true']);
-      
-      setTimeout(() => {
-        this.endGame('Promoted to Mid-Level. You learned to spot manipulation, set boundaries, and protect your energy. Well done.');
-      }, 2000);
-    }
   }
 
   advanceTime(hours: number = 1) {
     this.state.dayTime += hours;
+    this.tickPendingEffects(hours);
+    if (this.isReviewTime()) {
+      this.holdReview();
+      return;
+    }
 
     // Working late costs energy and increases burnout
     if (this.state.dayTime > WORK_HOURS.end) {
@@ -101,6 +94,12 @@ export class GameEngine {
   tickClock(hours: number) {
     if (this.state.isGameOver) return;
     this.state.dayTime += hours;
+    this.tickPendingEffects(hours);
+    if (this.state.isGameOver) return;
+    if (this.isReviewTime()) {
+      this.holdReview();
+      return;
+    }
     if (this.state.dayTime >= WORK_HOURS.end) {
       this.startNewDay();
     }
@@ -110,32 +109,67 @@ export class GameEngine {
   private startNewDay() {
     this.state.dayTime = WORK_HOURS.start;
     this.state.dayNumber++;
+    this.state.offeredToday = [];
 
     // Morning energy recovery
     this.updateStats({ energy: 20 });
-
-    // Process pending delayed effects
-    this.processPendingEffects();
   }
 
-  private processPendingEffects() {
-    const stillPending = [];
-    
+  /** Count delayed effects down by in-game hours and apply the ones that are due. */
+  private tickPendingEffects(hours: number) {
+    const due: GameState['pendingEffects'] = [];
+    const stillPending: GameState['pendingEffects'] = [];
     for (const effect of this.state.pendingEffects) {
-      effect.turnsRemaining--;
-      if (effect.turnsRemaining <= 0) {
-        this.updateStats(effect.stats);
-      } else {
-        stillPending.push(effect);
-      }
+      effect.hoursRemaining -= hours;
+      (effect.hoursRemaining <= 0 ? due : stillPending).push(effect);
     }
-    
     this.state.pendingEffects = stillPending;
+    for (const effect of due) this.updateStats(effect.stats);
   }
 
-  presentChoice(choice: Choice) {
+  private isReviewTime(): boolean {
+    return this.state.dayNumber >= REVIEW_DAY && this.state.dayTime >= REVIEW_HOUR;
+  }
+
+  /** Friday 17:00: every consequence still pending lands, then the boss scores the week. */
+  private holdReview() {
+    this.state.dayTime = REVIEW_HOUR;
+    const pending = this.state.pendingEffects;
+    this.state.pendingEffects = [];
+    for (const effect of pending) this.updateStats(effect.stats);
+    if (this.state.isGameOver) return;
+
+    const { performance, reputation } = this.state.stats;
+    const bar = PROMOTION_THRESHOLD.junior;
+    if (meetsPromotionBar(this.state.stats)) {
+      this.state.level = 'mid';
+      this.state.characterMemories.set('promotion_happened', ['true']);
+      this.endGame('Promoted to Mid-Level. You learned to spot manipulation, set boundaries, and protect your energy. Well done.', 'promoted');
+    } else if (performance >= bar.performance || reputation >= bar.reputation) {
+      const missing = performance >= bar.performance
+        ? `Reputation ${Math.round(reputation)}/${bar.reputation}: good work, but people didn't see it.`
+        : `Performance ${Math.round(performance)}/${bar.performance}: people like you, but the work didn't land.`;
+      this.endGame(`Kept on as Junior. ${missing} Try again next cycle.`, 'kept');
+    } else {
+      this.endGame(`Put on an improvement plan. Performance ${Math.round(performance)}/${bar.performance}, Reputation ${Math.round(reputation)}/${bar.reputation}. Choose your yeses more carefully.`, 'pip');
+    }
+  }
+
+  /**
+   * Show an offer. Each character gets one offer per day, so returns false
+   * (and shows nothing) if this character already made one today.
+   */
+  presentChoice(choice: Choice): boolean {
+    if (this.state.isGameOver || this.state.activeChoice) return false;
+    if (this.state.offeredToday.includes(choice.characterId)) return false;
+    this.state.offeredToday = [...this.state.offeredToday, choice.characterId];
     this.state.activeChoice = choice;
     this.notify();
+    return true;
+  }
+
+  hasOfferedToday(characterId: string): boolean {
+    return this.state.offeredToday.includes(characterId);
   }
 
   acceptChoice() {
@@ -148,7 +182,7 @@ export class GameEngine {
     if (choice.accept.delayed) {
       this.state.pendingEffects.push({
         stats: choice.accept.delayed,
-        turnsRemaining: choice.accept.delayTurns || 3,
+        hoursRemaining: choice.accept.delayHours || 3,
       });
     }
 
@@ -198,9 +232,10 @@ export class GameEngine {
     return this.state.characterMemories.has('promotion_happened');
   }
 
-  private endGame(reason: string) {
+  private endGame(reason: string, outcome: ReviewOutcome) {
     this.state.isGameOver = true;
     this.state.gameOverReason = reason;
+    this.state.outcome = outcome;
     this.notify();
   }
 
@@ -215,6 +250,7 @@ export class GameEngine {
       activeChoice: null,
       characterMemories: new Map(),
       pendingEffects: [],
+      offeredToday: [],
     };
     this.notify();
   }

@@ -36,7 +36,8 @@ export interface Choice {
   accept: {
     immediate: Partial<GameStats>;
     delayed?: Partial<GameStats>;
-    delayTurns?: number;
+    /** in-game hours before the delayed effect lands */
+    delayHours?: number;
   };
   decline: {
     immediate: Partial<GameStats>;
@@ -51,13 +52,20 @@ export interface GameState {
   level: 'junior' | 'mid' | 'senior';
   isGameOver: boolean;
   gameOverReason?: string;
+  /** how the run ended; set together with isGameOver */
+  outcome?: ReviewOutcome;
+  /** characters who have already made an offer today (one each per day) */
+  offeredToday: string[];
   activeChoice: Choice | null;
   characterMemories: Map<string, string[]>;
   pendingEffects: Array<{
     stats: Partial<GameStats>;
-    turnsRemaining: number;
+    /** in-game hours until it lands; anything still pending lands at the review */
+    hoursRemaining: number;
   }>;
 }
+
+export type ReviewOutcome = 'promoted' | 'kept' | 'pip' | 'burnout';
 
 export interface VoiceCallState {
   active: boolean;
@@ -89,8 +97,16 @@ export const WORK_HOURS = {
   end: 18,
 };
 
+/**
+ * Review Week: the run covers Wednesday to Friday and ends with a performance
+ * review on the last day, so a full game takes about 45 real minutes.
+ */
+export const DAY_NAMES = ['Wednesday', 'Thursday', 'Friday'];
+export const REVIEW_DAY = DAY_NAMES.length;
+export const REVIEW_HOUR = 17;
+
 /** One in-game day (9:00 to 18:00) takes this many real minutes. */
-export const REAL_MINUTES_PER_DAY = 30;
+export const REAL_MINUTES_PER_DAY = 15;
 export const GAME_HOURS_PER_REAL_SECOND =
   (WORK_HOURS.end - WORK_HOURS.start) / (REAL_MINUTES_PER_DAY * 60);
 
@@ -100,4 +116,10 @@ export function formatClock(dayTime: number): string {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
   return `${h}:${m.toString().padStart(2, '0')}`;
+}
+
+/** In-game work hours left before the review starts. */
+export function hoursUntilReview(dayNumber: number, dayTime: number): number {
+  const workday = WORK_HOURS.end - WORK_HOURS.start;
+  return Math.max(0, (REVIEW_DAY - dayNumber) * workday + REVIEW_HOUR - dayTime);
 }
