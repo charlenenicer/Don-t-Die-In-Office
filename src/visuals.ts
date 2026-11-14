@@ -84,6 +84,7 @@ function addClouds(scene: THREE.Scene) {
     const dist = 110 + rand() * 60;
     cloud.position.set(Math.cos(angle) * dist, 38 + rand() * 25, Math.sin(angle) * dist);
     cloud.rotation.y = rand() * Math.PI;
+    cloud.userData.exterior = true;
     scene.add(cloud);
   }
 }
@@ -718,12 +719,14 @@ export interface WorldData {
   /** every partition wall piece, so the game can cut away any that block the camera */
   walls: THREE.Object3D[];
   activities: ActivitySpot[];
+  /** the group holding the whole office, for the isometric cutaway and restyle */
+  root: THREE.Group;
 }
 
 const WALL_H = 7;
 const WALL_T = 0.25;
 /** every wall, partition and pillar shares this grey; rooms keep their color around the doorway */
-const WALL_GREY = GREY_MID;
+const WALL_GREY = '#b98a6a'; // warm terracotta plaster, like Interview Quest's brick streets
 
 /** A framed canvas painting, facing +z. Styles are simple procedural "office art". */
 function makePainting(style: 'sunset' | 'blocks' | 'circles' | 'mountain', w: number, h: number, rand: () => number): THREE.Group {
@@ -1129,8 +1132,8 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   ground.userData.keep = true;
   world.add(ground);
   box(world, 52, 0.2, 52, '#8b929b', 0, -0.1, 0);
-  tiledFloor(world, 52, 52, 0, 0, '#e4e7eb', 0.005, 0.01);              // whole floor: light grey tiles
-  tiledFloor(world, 20.5, 25, 0, 3, '#cdd2d8');                          // open-plan zone, slightly darker
+  tiledFloor(world, 52, 52, 0, 0, '#dcc8a4', 0.005, 0.01);              // whole floor: warm stone tiles
+  tiledFloor(world, 20.5, 25, 0, 3, '#c9a47a');                          // open-plan zone: honey oak
   cyl(world, 3.4, 3.4, 0.04, '#9ea5ae', 0, 0.02, 0, 48);                 // central rug
   cyl(world, 2.2, 2.2, 0.05, '#bcc2c9', 0, 0.025, 0, 48);
   tiledFloor(world, 13.5, 12, -17.75, -3, '#a6dcb0');                    // lunch room: green
@@ -1735,7 +1738,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     const room = roomAt(rooms, roomCenter.x, roomCenter.z);
     if (room) room.interior.add(obj);
   }
-  rooms.forEach((r) => world.add(r.interior));
+  rooms.forEach((r) => { r.interior.userData.interior = true; world.add(r.interior); });
   seats.forEach((st) => { st.room = roomAt(rooms, st.x, st.z)?.id ?? null; });
 
   // shadows everywhere except far scenery and glass
@@ -1761,5 +1764,5 @@ export function buildWorld(scene: THREE.Scene): WorldData {
 
   scene.add(world);
   addClouds(scene);
-  return { colliders, seats, rooms, walls: allWalls, activities, fireLight };
+  return { colliders, seats, rooms, walls: allWalls, activities, fireLight, root: world };
 }
