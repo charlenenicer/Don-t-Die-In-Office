@@ -24,14 +24,33 @@ Some characters manipulate you, one gets jealous after promotion, some give conf
 
 ## 🎨 Look & Feel
 
-Inspired by House House's *Big Walk*: soft pastel low-poly geometry, chunky round characters, minimal faces, flat lighting, gentle fog, wide calm spaces, and playful bobbing movement. All-original procedural art from primitives.
+Open Plan shares its look with [Interview Quest](https://interview-quest-theta.vercel.app): a hand-illustrated isometric world on a night-navy backdrop, with warm, slightly desaturated colours, soft ink outlines and cozy, detailed props. All of the art is original and procedural, built from Three.js primitives. There are no image assets apart from a few tiny canvas textures.
 
-**Setting:** One enclosed office floor: an open-plan center with desks and computers, a visible lunch room, a copy room, and a back row of glass-fronted rooms (meeting room, manager office, boss corner office), plus reception, lounges, plants, and windows.
+![The whole office floor in the painted isometric view](docs/media/restyle-overview.jpg)
+
+- **Camera:** a fixed orthographic isometric view, 35° down and 45° round from the south-east. It follows the player, and you can zoom between 0.6× and 2.4×.
+- **Shading:** stepped toon shading through a 4-step ramp. `paint()` in `src/palette.ts` maps every original colour into the shared palette: warmer, about 30% less saturated, greys warmed towards umber, and no pure white or black.
+- **Ink and paper:** a post pass draws ink outlines from depth jumps, depth creases and colour edges, with a slight hand-drawn wobble. It also adds fine paper grain, a soft colour wash and Interview Quest's navy vignette.
+- **Light:** late-afternoon sun comes in through the far (north and west) windows, with warm light pools on the floor and soft shadows falling towards the camera. Lamps and the fireplace add warm practical light. People and pickups have soft contact shadows.
+- **Dollhouse cutaway:** the far outer walls stay full height and keep their windows and art. Every other wall is cut down to a low partition, and the ceiling, hanging lamps and signs are hidden, so every room reads from above. Rooms and areas get small labels on the floor, like Interview Quest's street names.
+- **Props:** desks with monitors, mugs and paper stacks; plants; whiteboards; the copier; the lunch room with its fridge, vending machine and tables; a wall clock; the lounges and the fun zone.
+- **Characters:** chunky, illustrated coworkers in distinct outfits. Their name tags use Interview Quest's NPC label style, and when you're close a tag grows to show the role and the talk key.
+- **HUD:** Interview Quest's UI tokens and components: a top bar with brand and clock chips, dark translucent cards, teal-to-amber stat bars, amber gradient buttons, the bottom dialogue box for offers (with a portrait badge in the coworker's outfit colour), the result card for the Friday review, and matching toasts and conversation panel.
+- **Accessibility and performance:** with `prefers-reduced-motion`, the camera and zoom snap instead of easing, idle bobbing and marker pulsing stop, and UI animations are turned off. The shadow map is drawn once, because furniture doesn't move. Render resolution is capped at 1.75×, and drops to 1× if frames run slow.
+
+| Before | After |
+| --- | --- |
+| ![Before: third-person pastel view](docs/media/restyle-before.jpg) | ![After: painted isometric view](docs/media/restyle-after.jpg) |
+
+![Walking the open office, talking to Marcus and accepting his offer, then zooming out](docs/media/restyle-gameplay.gif)
+
+**Setting:** one enclosed office floor. An open-plan centre with desks and computers is surrounded by a lunch room, a copy room and a back row of rooms (meeting room, manager's office and the boss's corner office). There's also reception, a luxury lounge, a TV lounge, a fun zone, plants and windows.
 
 **Controls:**
-- WASD/Arrows: Move
-- E: Talk to nearby character or collect item
-- Third-person camera follows you
+- WASD/Arrows: move along the screen (W/↑ is always up the screen in the iso view)
+- E: talk to a nearby character or collect an item
+- Mouse wheel, `+`/`-`, or the on-screen buttons: zoom
+- Click a gold marker to sit or play; Space spins an office chair
 
 ## 📦 What's Included
 
@@ -40,7 +59,7 @@ Inspired by House House's *Big Walk*: soft pastel low-poly geometry, chunky roun
 - **Voice integration** via Alebex Voice API
 - **Demo mode** (fully playable without API key)
 - **Agent setup script** (idempotent, creates/updates agents)
-- **Tests** (vitest: game engine, webhook signatures, prompt validation)
+- **Tests** (vitest: game engine, webhook signatures, prompt validation, iso camera and input mapping, palette, cutaway, HUD)
 
 ## 🚀 Quick Start
 
@@ -228,6 +247,11 @@ Covers:
 - ✅ Character memory (last 5 interactions)
 - ✅ Webhook signature verification (HMAC-SHA256, constant-time compare, timestamp freshness)
 - ✅ Prompt validation (no exclamation marks, placeholders, em/en dashes, reserved names)
+- ✅ Isometric camera: 35°/45° offset, orthographic frustum, zoom clamping, reduced-motion snapping
+- ✅ Screen-aligned WASD/arrow mapping (W is always up the screen, diagonals normalised)
+- ✅ Painterly palette mapping, and UI tokens kept in sync with the stylesheet
+- ✅ Dollhouse cutaway (which walls stay, get cut, or hide)
+- ✅ HUD markup hooks, stat tones, name tags and area labels
 
 ## 🔒 Security
 

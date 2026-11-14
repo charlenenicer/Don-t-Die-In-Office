@@ -2,6 +2,11 @@ import { Game } from './game';
 import { formatClock, hoursUntilReview, DAY_NAMES, GAME_HOURS_PER_REAL_SECOND, PROMOTION_THRESHOLD } from './types';
 import type { GameState, ReviewOutcome } from './types';
 import { meetsPromotionBar } from './game-engine';
+import { CHARACTERS } from './characters';
+import { hudMarkup, initials, statTone } from './hud';
+import type { StatKey } from './hud';
+import { lookForCharacter } from './people';
+import { paint } from './palette';
 
 const OUTCOME_TITLES: Record<ReviewOutcome, string> = {
   promoted: 'Promoted!',
@@ -40,84 +45,42 @@ class App {
         <canvas id="game-canvas"></canvas>
         <div class="ui-overlay"></div>
         
-        <div class="hud">
-          <div class="stats-panel">
-            <div class="mode-indicator ${available ? 'voice' : 'demo'}">
-              ${available ? 'Voice Mode' : 'Demo Mode'}
-            </div>
-            <div class="stat">
-              <span class="stat-label">Energy</span>
-              <div class="stat-bar">
-                <div class="stat-fill energy" style="width: 80%"></div>
-              </div>
-              <span class="stat-value">80</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">Reputation</span>
-              <div class="stat-bar">
-                <div class="stat-fill reputation" style="width: 50%"></div>
-              </div>
-              <span class="stat-value">50</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">Performance</span>
-              <div class="stat-bar">
-                <div class="stat-fill performance" style="width: 50%"></div>
-              </div>
-              <span class="stat-value">50</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">Burnout</span>
-              <div class="stat-bar">
-                <div class="stat-fill burnout" style="width: 0%"></div>
-              </div>
-              <span class="stat-value">0</span>
-            </div>
-          </div>
-
-          <div class="time-panel">
-            <div class="day">${DAY_NAMES[0]}</div>
-            <div class="time">9:00</div>
-            <div class="review-countdown"></div>
-            <div class="level">Junior</div>
-            <div class="location">Reception</div>
-          </div>
-
-          <div class="inventory-panel">
-            <div class="inventory-title">Inventory</div>
-            <div class="inventory-items"></div>
-          </div>
-        </div>
+        ${hudMarkup(available, DAY_NAMES[0])}
 
         <div class="hint">
-          WASD/Arrows to move • E to interact
+          WASD/Arrows to move • E to interact • scroll to zoom
         </div>
 
         <div class="transcript-panel">
           <div class="transcript-header">
-            <span>Conversation</span>
+            <span class="panel-title">Conversation</span>
             <button class="close-transcript">×</button>
           </div>
           <div class="transcript-content"></div>
         </div>
 
         <div class="choice-modal hidden">
-          <div class="choice-content">
-            <h2 class="choice-title"></h2>
-            <p class="choice-description"></p>
-            <div class="choice-buttons">
-              <button class="accept-button">Accept</button>
-              <button class="decline-button">Decline</button>
+          <div class="choice-content dlg-box">
+            <div class="dlg-portrait" aria-hidden="true"></div>
+            <div class="dlg-body">
+              <div class="dlg-name choice-kicker"></div>
+              <h2 class="choice-title"></h2>
+              <p class="choice-description dlg-text"></p>
+              <div class="choice-buttons dlg-actions">
+                <button class="decline-button btn ghost">Decline</button>
+                <button class="accept-button btn">Accept</button>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="game-over-modal hidden">
-          <div class="game-over-content">
+          <div class="game-over-content result-card">
+            <div class="unlock-kicker">Friday performance review</div>
             <h2 class="game-over-title">Game Over</h2>
             <p class="game-over-reason"></p>
             <div class="game-over-stats"></div>
-            <button class="restart-button">Restart</button>
+            <button class="restart-button btn">Play the week again</button>
           </div>
         </div>
       </div>
@@ -171,6 +134,9 @@ class App {
       this.gameOverModal?.classList.add('hidden');
     });
 
+    document.querySelector('.zoom-in')?.addEventListener('click', () => this.game?.setZoom(this.game.getZoom() * 1.12));
+    document.querySelector('.zoom-out')?.addEventListener('click', () => this.game?.setZoom(this.game.getZoom() / 1.12));
+
     document.querySelector('.close-transcript')?.addEventListener('click', () => {
       this.transcriptPanel?.classList.remove('visible');
     });
@@ -185,6 +151,7 @@ class App {
       const valueEl = fill?.parentElement?.nextElementSibling as HTMLElement;
       
       if (fill) fill.style.width = `${value}%`;
+      fill?.closest('.stat')?.setAttribute('data-tone', statTone(stat as StatKey, value));
       if (valueEl) valueEl.textContent = Math.round(value).toString();
     });
 
@@ -254,7 +221,7 @@ class App {
     const nearbyChar = this.game.getNearbyCharacter();
     const nearbyItem = this.game.getNearbyItem();
 
-    let text = 'WASD/Arrows to move • E to interact';
+    let text = 'WASD/Arrows to move • E to interact • scroll to zoom';
     const playing = this.game.getActivityAction();
     const nearbyAction = this.game.getNearestMarkerAction();
     if (playing) {
@@ -268,7 +235,7 @@ class App {
     } else if (nearbyItem && !nearbyItem.collected) {
       text = `Press E to collect ${nearbyItem.name}`;
     } else if (nearbyAction) {
-      text = `Click the white circle to ${nearbyAction} • WASD to move`;
+      text = `Click the gold marker to ${nearbyAction} • WASD to move`;
     }
     if (this.hintElement.textContent !== text) this.hintElement.textContent = text;
   }
@@ -277,6 +244,11 @@ class App {
     this.choiceModal?.classList.remove('hidden');
     this.choiceModal!.querySelector('.choice-title')!.textContent = choice.title;
     this.choiceModal!.querySelector('.choice-description')!.textContent = choice.description;
+    const who = CHARACTERS.find((c) => c.id === choice.characterId);
+    this.choiceModal!.querySelector('.choice-kicker')!.textContent = who ? `${who.name} · ${who.role}` : 'An offer';
+    const portrait = this.choiceModal!.querySelector('.dlg-portrait') as HTMLElement;
+    portrait.textContent = who ? initials(who.name) : '?';
+    portrait.style.setProperty('--tag-color', who ? paint(lookForCharacter(who.id).top) : '#ffb547');
   }
 
   /** "Review in 32 min" in real time, since the whole run is under an hour */
@@ -288,6 +260,7 @@ class App {
 
   private showGameOver(state: GameState) {
     this.gameOverModal?.classList.remove('hidden');
+    (this.gameOverModal!.querySelector('.game-over-content') as HTMLElement).dataset.outcome = state.outcome ?? 'over';
     this.gameOverModal!.querySelector('.game-over-title')!.textContent =
       state.outcome ? OUTCOME_TITLES[state.outcome] : 'Game Over';
     this.gameOverModal!.querySelector('.game-over-reason')!.textContent = state.gameOverReason ?? '';

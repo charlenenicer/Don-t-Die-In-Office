@@ -1,68 +1,56 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 /**
- * Indoor lighting: filmic tone mapping, a soft studio environment for bounce
- * light, a warm overhead key that casts short shadows, a cool fill from the
- * windows, and warm practical lights at the lamps and fireplace (added by
- * buildWorld).
+ * Painterly indoor lighting for the toon materials: a warm sky/floor bounce, a
+ * low warm "late afternoon" key coming in through the far (north-west) windows
+ * whose soft shadows fall towards the camera, a cool fill from the other side,
+ * and warm practical lights at the lamps and fireplace (added by buildWorld).
+ *
+ * The key's shadow box covers the whole office and the furniture never moves,
+ * so the shadow map is drawn once (see Game) instead of every frame.
  */
 export interface Lighting {
-  /** Keep the shadow-casting key light centred on the player. */
+  /** Kept for callers; the key light covers the whole floor so nothing needs to follow. */
   follow(target: THREE.Vector3): void;
-  /** Call once everything is in the scene, so every material gets the same bounce light. */
+  /** Call once everything is in the scene: labels and glows are exempt from tone mapping. */
   applyEnvironment(root: THREE.Object3D): void;
 }
 
-/** How strongly the environment lights standard materials (r160 has no scene.environmentIntensity). */
-const ENV_INTENSITY = 0.3;
-
 export function setupLighting(renderer: THREE.WebGLRenderer, scene: THREE.Scene): Lighting {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.9;
+  renderer.toneMappingExposure = 1.05;
 
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
-  pmrem.dispose();
+  // warm bounce: honey from the floor, a dusky blue-lilac from above
+  scene.add(new THREE.HemisphereLight(0xfff0d6, 0x9a7a5a, 1.5));
 
-  // Sky above, warm floor bounce below; low, since the environment does most of the fill
-  scene.add(new THREE.HemisphereLight(0xdcecff, 0xb89a72, 0.3));
-
-  // Key: warm, nearly overhead like ceiling panels, so shadows pool under furniture
-  // instead of stretching across the floor
-  const key = new THREE.DirectionalLight(0xffe2b8, 2.4);
+  const key = new THREE.DirectionalLight(0xffd29a, 2.6);
+  key.position.set(-18, 30, -22);
+  key.target.position.set(0, 0, 0);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   const cam = key.shadow.camera;
-  cam.left = -24;
-  cam.right = 24;
-  cam.top = 24;
-  cam.bottom = -24;
+  cam.left = -34;
+  cam.right = 34;
+  cam.top = 34;
+  cam.bottom = -34;
   cam.near = 1;
-  cam.far = 60;
-  key.shadow.bias = -0.0004;
-  key.shadow.normalBias = 0.04;
-  key.shadow.radius = 3;
+  cam.far = 90;
+  key.shadow.bias = -0.0006;
+  key.shadow.normalBias = 0.05;
+  key.shadow.radius = 4;
   scene.add(key, key.target);
 
-  // Fill: cool daylight from the windows on the other side, no shadows, so the
-  // walls facing away from the key still read as different planes
-  const fill = new THREE.DirectionalLight(0xbfd8ff, 0.45);
-  fill.position.set(-20, 12, -14);
+  const fill = new THREE.DirectionalLight(0xb9c8ff, 0.5);
+  fill.position.set(20, 14, 18);
   scene.add(fill);
 
   return {
-    follow(target) {
-      key.position.set(target.x + 9, 28, target.z + 10);
-      key.target.position.set(target.x, 0, target.z);
-    },
+    follow() {},
     applyEnvironment(root) {
       root.traverse((o) => {
         if (!(o instanceof THREE.Mesh || o instanceof THREE.Sprite)) return;
         for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-          if (m instanceof THREE.MeshStandardMaterial) m.envMapIntensity = ENV_INTENSITY;
-          // Labels, screens and glowing bits keep their exact colours under tone mapping
-          else if (m instanceof THREE.MeshBasicMaterial || m instanceof THREE.SpriteMaterial) m.toneMapped = false;
+          if (m instanceof THREE.MeshBasicMaterial || m instanceof THREE.SpriteMaterial) m.toneMapped = false;
         }
       });
     },
