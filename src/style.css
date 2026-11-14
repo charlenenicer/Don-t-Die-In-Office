@@ -315,7 +315,8 @@ body {
   place-items: center;
   font-size: 2rem;
   font-weight: 800;
-  color: #1b1206;
+  color: #fff3dd;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.35), transparent 60%), var(--tag-color);
   border: 1px solid var(--line2);
 }

@@ -695,7 +695,7 @@ export function roomAt(rooms: Room[], x: number, z: number, margin = 0): Room | 
  */
 export interface ActivitySpot {
   id: 'foosball' | 'pingpong' | 'darts' | 'snacks' | 'drinks';
-  /** where the white circle floats */
+  /** where the seat/activity marker floats */
   marker: THREE.Vector3;
   /** where the player stands and which way they face */
   stand: { x: number; z: number; yaw: number };

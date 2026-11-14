@@ -235,7 +235,7 @@ class App {
     } else if (nearbyItem && !nearbyItem.collected) {
       text = `Press E to collect ${nearbyItem.name}`;
     } else if (nearbyAction) {
-      text = `Click the white circle to ${nearbyAction} • WASD to move`;
+      text = `Click the gold marker to ${nearbyAction} • WASD to move`;
     }
     if (this.hintElement.textContent !== text) this.hintElement.textContent = text;
   }

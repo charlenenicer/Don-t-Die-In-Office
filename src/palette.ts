@@ -32,6 +32,8 @@ export const PAPER_WASH = 0.1;
 /** Hue nudge towards warm orange, as a fraction of the distance. */
 export const WARM_SHIFT = 0.06;
 
+/** Colours less saturated than this count as greys and are warmed. */
+export const NEUTRAL_BELOW = 0.15;
 /** Lightness is squeezed into this range so whites read as paint, not glare. */
 export const LIGHTNESS_FLOOR = 0.05;
 export const LIGHTNESS_CEIL = 0.88;
@@ -90,9 +92,11 @@ function angleTo(a: number, b: number): number {
 export function paint(hex: string): string {
   const [r, g, b] = hexToRgb(hex);
   const hsl = rgbToHsl(r, g, b);
+  // near-neutral greys become warm greys (like paint mixed with umber); colours keep their hue
+  const neutral = hsl.s < NEUTRAL_BELOW;
   const warmed: HSL = {
-    h: hsl.h + angleTo(hsl.h, 32) * WARM_SHIFT * (hsl.s > 0.05 ? 1 : 0),
-    s: hsl.s * SATURATION_KEEP,
+    h: neutral ? 32 : hsl.h + angleTo(hsl.h, 32) * WARM_SHIFT,
+    s: neutral ? 0.1 + hsl.s * 0.3 : hsl.s * SATURATION_KEEP,
     // no paper-white or pure black: the brightest surfaces stay a soft cream
     l: LIGHTNESS_FLOOR + hsl.l * (LIGHTNESS_CEIL - LIGHTNESS_FLOOR),
   };

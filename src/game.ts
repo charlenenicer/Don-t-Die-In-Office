@@ -423,7 +423,7 @@ export class Game {
 
   // ------------------------------------------------------------------ seats
 
-  /** Small white circles over every seat and fun-zone activity; click one to sit or play. */
+  /** Small gold markers over every seat and fun-zone activity; click one to sit or play. */
   private createSeatMarkers() {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 128;
