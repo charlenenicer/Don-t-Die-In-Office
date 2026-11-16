@@ -1,7 +1,10 @@
 import type { Character } from './types';
 import { formatClock, hoursUntilReview, DAY_NAMES, REVIEW_HOUR } from './types';
 import { GameEngine } from './game-engine';
-import { getFirstMessage } from './characters';
+import { getClosingLine, getFirstMessage } from './characters';
+import type { EndReason } from './characters';
+import { GOODBYE_SILENCE_MS, drainDelayMs, isWindingDown, speechMs } from './call-ending';
+import { playerSnapshot } from './player-snapshot';
 
 interface AudioFrame {
   type: 'audio';
@@ -69,6 +72,15 @@ export class VoiceClient {
   private active = false;
   private transcript: Array<{ role: string; text: string }> = [];
   private offerPresented = false;
+  /** set once the conversation is ending; a second hang-up is immediate */
+  private ending = false;
+  private timers: number[] = [];
+  /** the player said goodbye; hang up after the coworker's reply if they don't */
+  private playerWindingDown = false;
+  private silenceTimer: number | null = null;
+  private pollTimer: number | null = null;
+  private unsubscribe: (() => void) | null = null;
+  private lastReport = 0;
 
   constructor(engine: GameEngine) {
     this.engine = engine;
@@ -79,6 +91,8 @@ export class VoiceClient {
 
     this.currentCharacter = character;
     this.active = true;
+    this.ending = false;
+    this.playerWindingDown = false;
     this.transcript = [];
     this.offerPresented = false;
 
@@ -119,7 +133,8 @@ export class VoiceClient {
 
       this.ws.onopen = () => this.onWebSocketOpen();
       this.ws.onmessage = (event) => this.onWebSocketMessage(event);
-      this.ws.onclose = () => this.endCall();
+      // the engine closing the socket (e.g. after the agent hangs up): let the last line finish
+      this.ws.onclose = () => this.finishAfterAudio();
       this.ws.onerror = (error) => {
         console.error('WebSocket error:', error);
         this.endCall();
@@ -127,25 +142,44 @@ export class VoiceClient {
 
     } catch (error) {
       console.error('Failed to start call:', error);
-      this.active = false;
+      // fall back to the demo conversation (still an active call, so it can close itself)
+      this.stopMicrophone();
+      this.ws = null;
       this.startDemoMode(character);
     }
   }
 
+  /**
+   * Demo mode (no voice key or agent): the same conversation shape as a live call,
+   * as captions. A rotating opener, the coworker's ask, then an in-character closing
+   * line, and the call ends once that line has had time to be "said".
+   */
   private startDemoMode(character: Character) {
-    // Show demo dialogue
     const firstMessage = getFirstMessage(character);
     this.addTranscript('agent', firstMessage);
-    
-    // Simulate offers based on character archetype
-    // The opener may already have triggered the offer through keyword detection
-    setTimeout(() => {
-      if (!this.offerPresented) this.createDemoOffer(character);
-      this.endDemoCall();
-    }, 2000);
+    this.later(() => {
+      // the opener may already have triggered the offer through keyword detection
+      if (!this.offerPresented) {
+        this.offerPresented = true;
+        this.createDemoOffer(character);
+      }
+      this.later(() => this.closeWith(getClosingLine(character, 'wrap-up')), 1200);
+    }, speechMs(firstMessage));
   }
 
-  private createDemoOffer(character: Character) {
+  /** The coworker says one closing line, then the call ends when it has been heard. */
+  private closeWith(line: string) {
+    if (!this.active || this.ending) return;
+    this.ending = true;
+    this.addTranscript('agent', line);
+    this.later(() => this.endCall(), speechMs(line));
+  }
+
+  private later(fn: () => void, ms: number) {
+    this.timers.push(window.setTimeout(fn, ms));
+  }
+
+  private createDemoOffer(character: Character, fromTool?: { title: string; description: string }) {
     const offers: Record<string, any> = {
       flatterer: {
         title: 'Weekend Sprint',
@@ -217,7 +251,9 @@ export class VoiceClient {
       },
     };
 
-    const offer = offers[character.archetype];
+    const base = offers[character.archetype];
+    // an offer made with the make_offer tool keeps the archetype's stakes but uses the agent's words
+    const offer = base && fromTool ? { ...base, title: fromTool.title, description: fromTool.description } : base;
     if (offer && this.engine.hasOfferedToday(character.id)) {
       window.dispatchEvent(new CustomEvent('toast', {
         detail: `${character.name} already asked you for something today\nOne offer per person per day`,
@@ -229,13 +265,6 @@ export class VoiceClient {
         ...offer,
       });
     }
-  }
-
-  private endDemoCall() {
-    setTimeout(() => {
-      this.addTranscript('agent', 'Alright, talk to you later.');
-      setTimeout(() => this.endCall(), 1000);
-    }, 1000);
   }
 
   private onWebSocketOpen() {
@@ -254,6 +283,8 @@ export class VoiceClient {
       state.inventory.length > 0 ? `Items: ${state.inventory.map(i => i.name).join(', ')}` : '',
       memory ? `Previous conversations: ${memory}` : '',
       this.engine.wasPromoted() ? 'Recently promoted' : '',
+      // the same words check_player returns, so the agent has them even before calling it
+      `How they seem: ${playerSnapshot(state, this.engine.wasPromoted()).summary.replace(/\.$/, "")}`,
     ].filter(Boolean).join('. ');
 
     // Start call
@@ -262,6 +293,11 @@ export class VoiceClient {
       agent: { id: this.currentCharacter.agentId },
       context,
     }));
+
+    // check_player reads what the game reports; make_offer comes back through the events poll
+    this.reportPlayer(true);
+    this.unsubscribe = this.engine.subscribe(() => this.reportPlayer());
+    this.pollTimer = window.setInterval(() => this.pollEvents(), 1500);
 
     // Start microphone streaming
     this.startMicrophoneStreaming();
@@ -318,6 +354,7 @@ export class VoiceClient {
       switch (frame.type) {
         case 'call_started':
           this.callId = frame.call_id;
+          this.reportPlayer(true);
           break;
 
         case 'audio':
@@ -345,7 +382,8 @@ export class VoiceClient {
           break;
 
         case 'call_ended':
-          this.endCall();
+          // the agent hung up after its closing line: let that line finish playing first
+          this.finishAfterAudio();
           break;
       }
     }
@@ -374,6 +412,7 @@ export class VoiceClient {
     this.playhead += buffer.duration;
 
     this.playing.add(source);
+    if (this.silenceTimer !== null) this.armGoodbyeTimer();
     source.onended = () => {
       this.playing.delete(source);
       if (this.playing.size === 0) {
@@ -409,9 +448,14 @@ export class VoiceClient {
 
   private addTranscript(role: string, text: string) {
     this.transcript.push({ role, text });
+
+    // the player is wrapping up: the agent is prompted to close; if it replies and
+    // then goes quiet without hanging up, the game hangs up for it
+    if (this.ws && role === 'caller' && isWindingDown(text)) this.playerWindingDown = true;
+    else if (this.ws && role === 'agent' && this.playerWindingDown) this.armGoodbyeTimer();
     
     // Monitor agent messages for offer/request keywords (mid-call detection)
-    if (role === 'agent' && !this.offerPresented && this.currentCharacter) {
+    if (role === 'agent' && !this.offerPresented && !this.ending && this.currentCharacter) {
       if (this.detectOfferIntent(text, this.currentCharacter)) {
         this.offerPresented = true;
         this.createDemoOffer(this.currentCharacter);
@@ -441,29 +485,130 @@ export class VoiceClient {
     return keywords.some(keyword => lower.includes(keyword));
   }
 
+  /**
+   * The player ends the conversation (E again, or walking away). Whatever the
+   * coworker is saying finishes, they get a short farewell, then the call ends.
+   * Called again while ending, it hangs up straight away.
+   */
+  hangUp(reason: EndReason = 'walk-away') {
+    if (!this.active) return;
+    if (this.ending) {
+      this.endCall();
+      return;
+    }
+    const character = this.currentCharacter!;
+    this.ending = true;
+    this.stopMicrophone();
+    const farewell = getClosingLine(character, reason);
+    if (!this.ws) {
+      // demo: the farewell is the last caption, then the call ends once it's "said"
+      for (const t of this.timers) clearTimeout(t);
+      this.timers = [];
+      this.addTranscript('agent', farewell);
+      this.later(() => this.endCall(), speechMs(farewell));
+      return;
+    }
+    // live: let the current line finish, show the farewell as a caption, then hang up
+    const wait = this.audioContext ? drainDelayMs(this.playhead, this.audioContext.currentTime) : 0;
+    this.later(() => {
+      this.addTranscript('agent', farewell);
+      this.later(() => this.endCall(), Math.min(1800, speechMs(farewell)));
+    }, wait);
+  }
+
+  /** The other side ended the call: tear down once the queued audio has played. */
+  private finishAfterAudio() {
+    if (!this.active) return;
+    this.ending = true;
+    this.stopMicrophone();
+    const wait = this.audioContext ? drainDelayMs(this.playhead, this.audioContext.currentTime) : 0;
+    if (wait <= 0) this.endCall();
+    else this.later(() => this.endCall(), wait);
+  }
+
+  /** Hang up for the agent if it answered a goodbye and then stayed quiet. */
+  private armGoodbyeTimer() {
+    if (this.silenceTimer !== null) clearTimeout(this.silenceTimer);
+    const wait = (this.audioContext ? drainDelayMs(this.playhead, this.audioContext.currentTime) : 0) + GOODBYE_SILENCE_MS;
+    this.silenceTimer = window.setTimeout(() => {
+      this.silenceTimer = null;
+      if (this.active && this.playing.size === 0) this.finishAfterAudio();
+      else if (this.active) this.armGoodbyeTimer();
+    }, wait);
+  }
+
+  /** Tell the server how the player is doing, for check_player (throttled unless forced). */
+  private reportPlayer(force = false) {
+    const character = this.currentCharacter;
+    if (!character || !this.ws) return;
+    const now = Date.now();
+    if (!force && now - this.lastReport < 1000) return;
+    this.lastReport = now;
+    const snapshot = playerSnapshot(this.engine.getState(), this.engine.wasPromoted());
+    fetch('/api/call/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callId: this.callId, agentId: character.agentId, snapshot }),
+    }).catch(() => {});
+  }
+
+  /** Offers the agent made with make_offer. */
+  private async pollEvents() {
+    const character = this.currentCharacter;
+    if (!character || !this.ws) return;
+    const qs = new URLSearchParams({ agentId: character.agentId ?? '', ...(this.callId ? { callId: this.callId } : {}) });
+    try {
+      const res = await fetch(`/api/call/events?${qs}`);
+      if (!res.ok) return;
+      const { offers } = await res.json();
+      const offer = offers?.[0];
+      if (offer && !this.offerPresented && this.currentCharacter === character) {
+        this.offerPresented = true;
+        this.createDemoOffer(character, offer);
+      }
+    } catch {}
+  }
+
+  private stopMicrophone() {
+    if (this.processor) {
+      this.processor.onaudioprocess = null;
+      this.processor.disconnect();
+      this.processor = null;
+    }
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(track => track.stop());
+      this.mediaStream = null;
+    }
+  }
+
+  /** Tear the call down now. Prefer hangUp() for anything the player does. */
   endCall() {
+    for (const t of this.timers) clearTimeout(t);
+    this.timers = [];
+    if (this.silenceTimer !== null) clearTimeout(this.silenceTimer);
+    this.silenceTimer = null;
+    if (this.pollTimer !== null) clearInterval(this.pollTimer);
+    this.pollTimer = null;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    if (!this.active) return;
+
     // End-of-call fallback: only present offer if nothing fired mid-call
     const voiceCharacter = this.ws ? this.currentCharacter : null;
     const agentSpoke = this.transcript.some(line => line.role === 'agent');
     const shouldPresentFallback = voiceCharacter && agentSpoke && !this.offerPresented;
 
     if (this.ws) {
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'end_call' }));
-      }
-      this.ws.close();
+      const ws = this.ws;
       this.ws = null;
+      ws.onclose = null;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'end_call' }));
+      }
+      ws.close();
     }
 
-    if (this.processor) {
-      this.processor.disconnect();
-      this.processor = null;
-    }
-
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop());
-      this.mediaStream = null;
-    }
+    this.stopMicrophone();
 
     if (this.audioContext) {
       this.audioContext.close();
@@ -480,6 +625,8 @@ export class VoiceClient {
     this.heldMarks = [];
     this.playhead = 0;
     this.active = false;
+    this.ending = false;
+    this.playerWindingDown = false;
     this.currentCharacter = null;
     this.callId = null;
     this.offerPresented = false;
@@ -491,6 +638,11 @@ export class VoiceClient {
 
   isActive(): boolean {
     return this.active;
+  }
+
+  /** True once the conversation is wrapping up (closing line playing). */
+  isEnding(): boolean {
+    return this.ending;
   }
 
   getCurrentCharacter(): Character | null {

@@ -16,6 +16,7 @@ import { flicker, setupLighting } from './lighting';
 import type { Lighting } from './lighting';
 import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
 import { advanceGait, createGait, gaitPose, turnToward } from './gait';
+import { WalkAwayTimer } from './call-ending';
 import type { GaitState } from './gait';
 import type { CharacterRig } from './people';
 import { PICKUP_CLEARANCE, createPickup } from './pickups';
@@ -91,6 +92,8 @@ export class Game {
   
   private keys: Set<string> = new Set();
   private nearbyCharacter: Character | null = null;
+  /** walking away from the coworker you're talking to ends the conversation */
+  private walkAway = new WalkAwayTimer();
   private nearbyItem: InventoryItem | null = null;
   
   private uiContainer: HTMLElement;
@@ -299,9 +302,10 @@ export class Game {
   }
 
   private interact() {
-    // E during a call hangs up
+    // E during a call wraps it up: the coworker finishes their line and says goodbye
+    // (E again while they do hangs up at once)
     if (this.voiceClient.isActive()) {
-      this.voiceClient.endCall();
+      this.voiceClient.hangUp('walk-away');
       return;
     }
 
@@ -950,11 +954,24 @@ export class Game {
     this.updatePlayer(delta);
     this.updateSeatMarkers();
     this.updateNPCs(delta);
+    this.updateCallRange(delta);
     this.updateItems(delta);
     this.updateLabels();
     
     this.painterly.render();
   };
+
+  /** Walking out of range of the coworker you're talking to wraps the conversation up. */
+  private updateCallRange(delta: number) {
+    const who = this.voiceClient.isActive() && !this.voiceClient.isEnding() ? this.voiceClient.getCurrentCharacter() : null;
+    const mesh = who ? this.characters.get(who.id) : undefined;
+    if (!mesh) {
+      this.walkAway.reset();
+      return;
+    }
+    const d = Math.hypot(mesh.position.x - this.playerPosition.x, mesh.position.z - this.playerPosition.z);
+    if (this.walkAway.update(d, delta)) this.voiceClient.hangUp('walk-away');
+  }
 
   getEngine(): GameEngine {
     return this.engine;

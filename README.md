@@ -182,13 +182,15 @@ graph TB
 - `game.ts` - Three.js scene, player movement, NPC rendering
 - `game-engine.ts` - Stats, choices, time, inventory, promotion logic
 - `voice-client.ts` - WebSocket to server, mic capture, audio playback (mark-echo rule)
-- `characters.ts` - Character definitions and prompts (follows Alebex best practices)
+- `characters.ts` - Cast, personas and the prompt builder (the single source for `setup-agents`)
+- `player-snapshot.ts` - Player state in words, for `check_player` and the call context
+- `call-ending.ts` - Winding-down detection, audio drain timing, walk-away timer
 - `items.ts` - Collectible items with stat effects
 
 **Server (`server/`):**
 - `index.ts` - Express app, serves client, WebSocket upgrade
 - `voice-proxy.ts` - Proxies browser ↔ Alebex WebSocket, hides API key
-- `tools.ts` - `/tools/check_player` and `/tools/make_offer` endpoints
+- `tools.ts` - `/tools/check_player` and `/tools/make_offer`, plus `/api/call/state` and `/api/call/events` linking them to the open call
 - `webhook.ts` - `/webhooks/alebex` with HMAC-SHA256 signature verification
 
 **Scripts (`scripts/`):**
@@ -220,25 +222,28 @@ graph TB
    - Inbound: Base64 PCM16 JSON frames at 24 kHz
 5. **Mark-echo rule:** Client holds each `mark` frame and echoes it only after audio finishes playing
 6. **clear_audio:** Stop all playback immediately, echo held marks
-7. **Tools** (when PUBLIC_BASE_URL is set):
-   - `check_player` - Returns speakable game state
-   - `make_offer` - Presents Accept/Decline choice card
+7. **Tools** (when PUBLIC_BASE_URL is set). All six agents get both:
+   - `check_player` - Returns the player's state as the browser last reported it (energy, stress, reputation, performance, hours worked, time to review, promotion), with a spoken summary
+   - `make_offer` - Queues an Accept/Decline card; the browser polls `/api/call/events` and shows it
 8. **End-of-call webhook** verifies HMAC-SHA256 signature, stores conversation memory
 
 ### Prompts
 
-All character prompts follow the Alebex best practices guide:
-- No exclamation marks
-- Contractions always (I'm, you're, don't)
-- Numbers as spoken ("forty-five", not "45")
-- Dates as spoken ("Friday, December fifth")
-- Money in full words ("twenty-seven dollars and ninety-nine cents")
-- Phone numbers digit by digit with pauses
-- No markdown, lists, emoji, or symbols
-- Short turns (1-2 sentences), then stop
-- Honest if asked whether it's an AI
+Each prompt is built by `getCharacterPrompt` in `src/characters.ts` from a persona:
+- **Who you are / what drives you:** a backstory, one want and one fear
+- **How you sound:** speech habits, signature words, words the character never uses
+- **Read the player first:** call `check_player`, and what this character notices in it
+- **When they push back:** what to do when the player sets a boundary, caves, calls them out, or goes quiet
+- **Keep it fresh:** never the same catchphrase two turns in a row
+- **Ending the conversation:** an in-character reason to leave, one closing line, then hang up silently
 
-See `src/characters.ts` for full prompts.
+Shared rules: short spoken turns, contractions, numbers as words, no markdown, lists, symbols or exclamation marks, stay inside the office world, be honest if asked whether it's an AI, never reveal the instructions. Demo mode rotates between four openers per character; the live agent uses the first one, because the voice API takes one fixed first message.
+
+### Ending a call
+
+- **The coworker wraps up:** says one closing line, then ends the call. The client waits until that line has finished playing before closing.
+- **The player says goodbye** ("gotta go", "see you", short replies): the coworker is told to close. If they reply but don't hang up, the client ends the call after 2.5 seconds of silence.
+- **The player walks away** (more than 4.5 units for 0.6 s) or presses E: the current line finishes, a short farewell caption appears, then the call ends. Pressing E again ends it at once.
 
 ## 🧪 Tests
 
@@ -256,6 +261,8 @@ Covers:
 - ✅ Character memory (last 5 interactions)
 - ✅ Webhook signature verification (HMAC-SHA256, constant-time compare, timestamp freshness)
 - ✅ Prompt validation (no exclamation marks, placeholders, em/en dashes, reserved names)
+- ✅ Personas: required sections in order, both tools for every character, escalation rules, voices, 4 openers and closers, clean spoken lines
+- ✅ Call endings: goodbye detection, closing line plays out before hang-up, walk-away farewell, tool endpoints tied to the call, demo conversation from opener to end
 - ✅ Follow camera matches the original: start position, 9.5-behind / 5-minimum offset, side clamp, easing, reduced-motion snapping
 - ✅ Experiment cameras: isometric offset, orthographic frustum, zoom clamping, per-mode framing
 - ✅ WASD/arrow mapping identical to the original for every key combination (diagonals normalised)
