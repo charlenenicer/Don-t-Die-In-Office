@@ -100,4 +100,41 @@ export const DEFAULT_VARIANT: VariantConfig = {
   style: PAINTED_STYLE,
 };
 
-export const VARIANT: VariantConfig = DEFAULT_VARIANT;
+/**
+ * Experiment: tilted iso with smooth room zoom + cut paper.
+ * A steeper, more top-down orthographic view (55° down, 20° round) that eases
+ * in close when you step into a room and back out on the open floor. Flat
+ * posterised colour like layered craft paper on a kraft backdrop, with heavy
+ * paper fibre grain, soft brown edges and offset paper shadows on the HUD.
+ */
+export const VARIANT: VariantConfig = {
+  name: 'exp/tilted-iso-paper',
+  camera: 'tilted-zoom',
+  pitchDeg: 55,
+  yawDeg: 20,
+  fov: 40,
+  distance: 70,
+  zoom: 1.0,
+  style: {
+    ...PAINTED_STYLE,
+    ramp: [140, 205, 255],
+    saturationKeep: 0.8,
+    lightnessFloor: 0.1,
+    lightnessCeil: 0.86,
+    paperWash: 0.14,
+    paper: '#e8d9b8',
+    background: '#cdb98f',
+    ink: '#4a3826',
+    inkStrength: 0.7,
+    inkWobble: 0.35,
+    colourEdge: 0.45,
+    grain: 2.6,
+    wash: 1.6,
+    washScale: 38,
+    vignette: '#a8916a',
+    vignetteStrength: 0.5,
+    posterize: 5,
+    bodyClass: 'variant-paper',
+  },
+};
+

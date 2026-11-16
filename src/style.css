@@ -399,3 +399,26 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- light paper HUD for the experiment: same Interview Quest components, light panels ---- */
+body.variant-paper {
+  --panel: #f3e8d0;
+  --line: rgba(70, 50, 30, 0.16);
+  --line2: rgba(70, 50, 30, 0.28);
+  --text: #3b2f2a;
+  --muted: #7d6c5e;
+  --accent2: #b86a12;
+  background: #cdb98f;
+}
+body.variant-paper .card, body.variant-paper .topbar, body.variant-paper .hint, body.variant-paper .character-label, body.variant-paper .area-label,
+body.variant-paper .dlg-box, body.variant-paper .toast, body.variant-paper .transcript-panel, body.variant-paper .result-card,
+body.variant-paper .zoom-controls .btn {
+  background: #f3e8d0;
+  color: var(--text);
+  box-shadow: 4px 5px 0 rgba(74, 56, 38, 0.35);
+}
+body.variant-paper .stat-bar { background: rgba(70, 50, 30, 0.12); }
+body.variant-paper .chip { background: rgba(255, 255, 255, 0.35); }
+body.variant-paper .area-label { color: #5b4a3c; }
+body.variant-paper .choice-modal, body.variant-paper .game-over-modal { background: rgba(80, 60, 40, 0.28); }
+body.variant-paper .card, body.variant-paper .dlg-box, body.variant-paper .result-card { border-radius: 4px; }
