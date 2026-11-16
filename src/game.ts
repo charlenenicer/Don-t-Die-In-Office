@@ -22,13 +22,15 @@ import {
   ACTIVITY_RULES, COOLDOWN_HOURS, absoluteHours, cooldownMinutesLeft, describeEffects,
 } from './activities';
 import {
-  ZOOM_DEFAULT, clampZoom, followFactor, frustum, inputFromKeys, isoOffset, screenMove, worldPerPixel, zoomBy,
+  inputFromKeys, screenMove, zoomBy,
 } from './iso';
 import { createBlobShadow, createPainterly, createRampTexture, toonify } from './painterly';
 import type { Painterly } from './painterly';
 import { applyCutaway } from './cutaway';
 import { addIsoDecor } from './decor';
-import { IQ, paint } from './palette';
+import { paint } from './palette';
+import { VARIANT } from './variant';
+import { CameraRig } from './camera-rig';
 import { AREA_LABELS, nameTagHtml } from './hud';
 
 /** Respect the OS "reduce motion" setting: no camera easing, idle bobbing or pulsing. */
@@ -37,11 +39,11 @@ const prefersReducedMotion = (): boolean =>
 
 export class Game {
   private scene: THREE.Scene;
-  private camera: THREE.OrthographicCamera;
+  private rig: CameraRig;
+  private get camera(): THREE.OrthographicCamera | THREE.PerspectiveCamera { return this.rig.camera; }
+  /** test hook: walk in this world direction instead of reading the keys */
+  debugMove: { x: number; z: number } | null = null;
   private painterly: Painterly;
-  private zoom = ZOOM_DEFAULT;
-  private targetZoom = ZOOM_DEFAULT;
-  private camTarget = new THREE.Vector3();
   private reducedMotion = prefersReducedMotion();
   private areaLabels: { el: HTMLElement; pos: THREE.Vector3 }[] = [];
   private renderer: THREE.WebGLRenderer;
@@ -98,20 +100,20 @@ export class Game {
     // Scene setup
     this.scene = new THREE.Scene();
     // Interview Quest's night-navy backdrop around the lit office
-    this.scene.background = new THREE.Color(IQ.bg);
+    this.scene.background = new THREE.Color(VARIANT.style.background);
+    if (VARIANT.style.bodyClass) document.body.classList.add(VARIANT.style.bodyClass);
 
     // Camera: fixed isometric view (35° down, from the south-east) that follows the player
-    const f = frustum(container.clientWidth / container.clientHeight, this.zoom);
-    this.camera = new THREE.OrthographicCamera(f.left, f.right, f.top, f.bottom, 1, 160);
-    this.camTarget.copy(this.playerPosition);
-    this.placeCamera();
+    this.rig = new CameraRig(VARIANT, AREA_LABELS, container.clientWidth / container.clientHeight, container.clientHeight, this.playerPosition);
 
     // Renderer setup
     // Draw into the page's existing canvas; a second canvas would land below the viewport
     const canvas = container.querySelector<HTMLCanvasElement>('#game-canvas') ?? undefined;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    const scale = VARIANT.style.pixelScale;
+    this.renderer.setPixelRatio(scale < 1 ? scale : Math.min(window.devicePixelRatio, 1.75));
+    if (scale < 1) this.renderer.domElement.style.imageRendering = 'pixelated';
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // furniture doesn't move, so the shadow map is drawn once; people get soft blob shadows instead
@@ -155,7 +157,7 @@ export class Game {
     // Painterly look: stepped toon shading in the shared palette, then ink, grain and vignette
     toonify(this.scene, createRampTexture());
     this.painterly = createPainterly(this.renderer, this.scene, this.camera, container.clientWidth, container.clientHeight);
-    this.painterly.setWorldPerPixel(worldPerPixel(container.clientHeight, this.zoom));
+    this.painterly.setWorldPerPixel(this.rig.worldPerPixel());
     window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', (e) => { this.reducedMotion = e.matches; });
     if (new URLSearchParams(location.search).has('debug')) (window as any).__openPlan = this;
 
@@ -266,13 +268,13 @@ export class Game {
     // zoom: mouse wheel / trackpad pinch, or + and - keys
     dom.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.setZoom(zoomBy(this.targetZoom, -Math.sign(e.deltaY)));
+      this.setZoom(zoomBy(this.rig.getZoom(), -Math.sign(e.deltaY)));
     }, { passive: false });
 
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key.toLowerCase());
-      if (e.key === '+' || e.key === '=') this.setZoom(zoomBy(this.targetZoom, 1));
-      if (e.key === '-' || e.key === '_') this.setZoom(zoomBy(this.targetZoom, -1));
+      if (e.key === '+' || e.key === '=') this.setZoom(zoomBy(this.rig.getZoom(), 1));
+      if (e.key === '-' || e.key === '_') this.setZoom(zoomBy(this.rig.getZoom(), -1));
       
       if (e.key.toLowerCase() === 'e') {
         this.interact();
@@ -324,7 +326,7 @@ export class Game {
   private updatePlayer(delta: number) {
     const speed = 5;
     // WASD / arrows move along the screen, not the world axes, so W is always "up" in the iso view
-    const move = screenMove(inputFromKeys(this.keys));
+    const move = this.debugMove ?? screenMove(inputFromKeys(this.keys), VARIANT.yawDeg);
     const direction = new THREE.Vector3(move.x, 0, move.z);
 
     if (this.activity) {
@@ -403,14 +405,8 @@ export class Game {
     }
 
     // Isometric camera eases after the player (snaps under reduced motion), and eases its zoom
-    const k = followFactor(delta, this.reducedMotion);
-    this.camTarget.lerp(new THREE.Vector3(this.playerPosition.x, 0.8, this.playerPosition.z), k);
-    const kz = followFactor(delta, this.reducedMotion, 10);
-    if (Math.abs(this.targetZoom - this.zoom) > 1e-4) {
-      this.zoom += (this.targetZoom - this.zoom) * kz;
-      this.applyFrustum();
-    }
-    this.placeCamera();
+    this.rig.update(delta, this.playerPosition, roomAt(this.rooms, this.playerPosition.x, this.playerPosition.z), this.reducedMotion);
+    this.painterly.setWorldPerPixel(this.rig.worldPerPixel());
 
     // The key light and its shadow box follow the player; the fire flickers
     this.lighting.follow(this.playerPosition);
@@ -828,33 +824,19 @@ export class Game {
     group.add(createBlobShadow(0.62, 0.45));
   }
 
-  private placeCamera() {
-    const [ox, oy, oz] = isoOffset();
-    this.camera.position.set(this.camTarget.x + ox, this.camTarget.y + oy, this.camTarget.z + oz);
-    this.camera.lookAt(this.camTarget);
-  }
-
   private applyFrustum() {
     const el = this.renderer?.domElement;
-    const w = el?.clientWidth || window.innerWidth;
-    const h = el?.clientHeight || window.innerHeight;
-    const f = frustum(w / h, this.zoom);
-    Object.assign(this.camera, f);
-    this.camera.updateProjectionMatrix();
-    this.painterly?.setWorldPerPixel(worldPerPixel(h, this.zoom));
+    this.rig.resize(el?.clientWidth || window.innerWidth, el?.clientHeight || window.innerHeight);
+    this.painterly?.setWorldPerPixel(this.rig.worldPerPixel());
   }
 
-  /** Zoom the iso view (clamped). Eases unless reduced motion is on. */
+  /** Zoom the view (clamped); the camera rig eases towards it. */
   setZoom(z: number) {
-    this.targetZoom = clampZoom(z);
-    if (this.reducedMotion) {
-      this.zoom = this.targetZoom;
-      this.applyFrustum();
-    }
+    this.rig.setZoom(z);
   }
 
   getZoom(): number {
-    return this.targetZoom;
+    return this.rig.getZoom();
   }
 
   /** Where the player stands, for tests and the debug hook. */

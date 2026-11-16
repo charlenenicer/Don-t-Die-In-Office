@@ -89,20 +89,27 @@ function angleTo(a: number, b: number): number {
 }
 
 /** Map a colour onto the warm, slightly desaturated painterly palette. */
-export function paint(hex: string): string {
+export interface PaintOptions { saturationKeep: number; lightnessFloor: number; lightnessCeil: number; paperWash: number; paper: string }
+
+export const PAINT_DEFAULTS: PaintOptions = {
+  saturationKeep: SATURATION_KEEP, lightnessFloor: LIGHTNESS_FLOOR, lightnessCeil: LIGHTNESS_CEIL, paperWash: PAPER_WASH, paper: PAPER,
+};
+
+export function paint(hex: string, o: PaintOptions = PAINT_DEFAULTS): string {
   const [r, g, b] = hexToRgb(hex);
   const hsl = rgbToHsl(r, g, b);
   // near-neutral greys become warm greys (like paint mixed with umber); colours keep their hue
   const neutral = hsl.s < NEUTRAL_BELOW;
   const warmed: HSL = {
     h: neutral ? 32 : hsl.h + angleTo(hsl.h, 32) * WARM_SHIFT,
-    s: neutral ? 0.1 + hsl.s * 0.3 : hsl.s * SATURATION_KEEP,
+    s: neutral ? 0.1 + hsl.s * 0.3 : hsl.s * o.saturationKeep,
     // no paper-white or pure black: the brightest surfaces stay a soft cream
-    l: LIGHTNESS_FLOOR + hsl.l * (LIGHTNESS_CEIL - LIGHTNESS_FLOOR),
+    l: o.lightnessFloor + hsl.l * (o.lightnessCeil - o.lightnessFloor),
   };
-  const [pr, pg, pb] = hexToRgb(PAPER);
+  const [pr, pg, pb] = hexToRgb(o.paper);
   const [wr, wg, wb] = hslToRgb(warmed);
-  return rgbToHex(wr + (pr - wr) * PAPER_WASH, wg + (pg - wg) * PAPER_WASH, wb + (pb - wb) * PAPER_WASH);
+  const k = o.paperWash;
+  return rgbToHex(wr + (pr - wr) * k, wg + (pg - wg) * k, wb + (pb - wb) * k);
 }
 
 export function saturation(hex: string): number {

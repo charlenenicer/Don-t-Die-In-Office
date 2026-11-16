@@ -3,7 +3,14 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { FullScreenQuad, Pass } from 'three/examples/jsm/postprocessing/Pass.js';
-import { INK, IQ, paint } from './palette';
+import { paint } from './palette';
+import type { PaintOptions } from './palette';
+import { VARIANT } from './variant';
+import type { StyleConfig } from './variant';
+
+const STYLE: StyleConfig = VARIANT.style;
+const PAINT: PaintOptions = STYLE;
+const tint = (hex: string) => paint(hex, PAINT);
 
 /**
  * The hand-illustrated look: stepped toon shading in the painterly palette, an
@@ -13,13 +20,13 @@ import { INK, IQ, paint } from './palette';
  */
 
 /** Four soft light bands, darkest first. Kept tiny and nearest-filtered so bands stay crisp. */
-export function createRampTexture(): THREE.DataTexture {
-  const steps = [92, 150, 214, 255];
+export function createRampTexture(style: StyleConfig = STYLE): THREE.DataTexture {
+  const steps = style.ramp;
   const data = new Uint8Array(steps.length * 4);
   steps.forEach((v, i) => data.set([v, v, v, 255], i * 4));
   const tex = new THREE.DataTexture(data, steps.length, 1, THREE.RGBAFormat);
-  tex.minFilter = THREE.NearestFilter;
-  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = style.softRamp ? THREE.LinearFilter : THREE.NearestFilter;
+  tex.magFilter = style.softRamp ? THREE.LinearFilter : THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
   return tex;
@@ -29,19 +36,21 @@ const swapped = new WeakMap<THREE.Material, THREE.Material>();
 
 function toonFrom(m: THREE.MeshStandardMaterial, ramp: THREE.Texture): THREE.MeshToonMaterial {
   const toon = new THREE.MeshToonMaterial({
-    color: new THREE.Color(paint(`#${m.color.getHexString()}`)),
+    color: new THREE.Color(tint(`#${m.color.getHexString()}`)),
     map: m.map,
     gradientMap: ramp,
     transparent: m.transparent,
     opacity: m.opacity,
     side: m.side,
     depthWrite: m.depthWrite,
-    emissive: new THREE.Color(paint(`#${m.emissive.getHexString()}`)),
+    emissive: new THREE.Color(tint(`#${m.emissive.getHexString()}`)),
     emissiveIntensity: m.emissiveIntensity,
     emissiveMap: m.emissiveMap,
     alphaTest: m.alphaTest,
     fog: false,
   });
+  // faceted look; the toon shader honours the flag even though its typings omit it
+  (toon as unknown as { flatShading: boolean }).flatShading = STYLE.flatShading;
   toon.name = m.name;
   toon.userData = { ...m.userData, painted: true };
   return toon;
@@ -66,7 +75,7 @@ export function toonify(root: THREE.Object3D, ramp: THREE.Texture): number {
         out = toonFrom(m as THREE.MeshStandardMaterial, ramp);
         count++;
       } else if (m instanceof THREE.MeshBasicMaterial) {
-        if (!m.map) m.color.set(paint(`#${m.color.getHexString()}`));
+        if (!m.map) m.color.set(tint(`#${m.color.getHexString()}`));
         m.fog = false;
         m.toneMapped = false;
         m.userData.painted = true;
@@ -114,10 +123,19 @@ const inkShader = {
     cameraNear: { value: 0.1 },
     cameraFar: { value: 200 },
     worldPerPixel: { value: 0.03 },
-    ink: { value: new THREE.Color(INK) },
-    vignette: { value: new THREE.Color(IQ.bg) },
-    strength: { value: 1 },
-    grain: { value: 1 },
+    ink: { value: new THREE.Color(STYLE.ink) },
+    vignette: { value: new THREE.Color(STYLE.vignette) },
+    vignetteStrength: { value: STYLE.vignetteStrength },
+    strength: { value: STYLE.inkStrength },
+    inkWidth: { value: STYLE.inkWidth },
+    wobble: { value: STYLE.inkWobble },
+    colourEdgeWeight: { value: STYLE.colourEdge },
+    grain: { value: STYLE.grain },
+    wash: { value: STYLE.wash },
+    washScale: { value: STYLE.washScale },
+    posterize: { value: STYLE.posterize },
+    isOrtho: { value: 1 },
+    perspK: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -134,12 +152,22 @@ const inkShader = {
     uniform vec3 ink;
     uniform vec3 vignette;
     uniform float strength;
+    uniform float inkWidth;
+    uniform float wobble;
+    uniform float colourEdgeWeight;
     uniform float grain;
+    uniform float wash;
+    uniform float washScale;
+    uniform float posterize;
+    uniform float vignetteStrength;
+    uniform float isOrtho;
+    uniform float perspK;
     varying vec2 vUv;
 
     float viewDepth(vec2 uv) {
       float d = texture2D(tDepth, uv).x;
-      return -orthographicDepthToViewZ(d, cameraNear, cameraFar);
+      if (isOrtho > 0.5) return -orthographicDepthToViewZ(d, cameraNear, cameraFar);
+      return -perspectiveDepthToViewZ(d, cameraNear, cameraFar);
     }
     float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
     float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -151,9 +179,11 @@ const inkShader = {
     }
 
     void main() {
-      vec2 px = 1.0 / resolution;
+      vec2 px = inkWidth / resolution;
       vec4 base = texture2D(tColor, vUv);
       float dc = viewDepth(vUv);
+      // perspective: a pixel covers more of the world further away
+      float wpp = isOrtho > 0.5 ? worldPerPixel * inkWidth : dc * perspK * inkWidth;
       float dl = viewDepth(vUv - vec2(px.x, 0.0));
       float dr = viewDepth(vUv + vec2(px.x, 0.0));
       float du = viewDepth(vUv + vec2(0.0, px.y));
@@ -161,32 +191,34 @@ const inkShader = {
 
       // silhouettes: a jump in depth bigger than a steep floor would make
       float jump = max(max(abs(dl - dc), abs(dr - dc)), max(abs(du - dc), abs(dd - dc)));
-      float sil = smoothstep(worldPerPixel * 3.0 + 0.06, worldPerPixel * 5.0 + 0.16, jump);
+      float sil = smoothstep(wpp * 3.0 + 0.06, wpp * 5.0 + 0.16, jump);
       // creases: the depth slope changes, e.g. where a box face meets its top
       float lap = abs(dl + dr - 2.0 * dc) + abs(du + dd - 2.0 * dc);
-      float crease = smoothstep(worldPerPixel * 0.9, worldPerPixel * 2.2, lap) * 0.75;
+      float crease = smoothstep(wpp * 0.9, wpp * 2.2, lap) * 0.75;
       // colour edges, softer: where toon bands or paint colours meet
       vec3 cl = texture2D(tColor, vUv - vec2(px.x, 0.0)).rgb;
       vec3 cr = texture2D(tColor, vUv + vec2(px.x, 0.0)).rgb;
       vec3 cu = texture2D(tColor, vUv + vec2(0.0, px.y)).rgb;
       vec3 cd = texture2D(tColor, vUv - vec2(0.0, px.y)).rgb;
       float ce = length(vec2(luma(cr) - luma(cl), luma(cu) - luma(cd)));
-      float colourEdge = smoothstep(0.10, 0.28, ce) * 0.35;
+      float colourEdge = smoothstep(0.10, 0.28, ce) * colourEdgeWeight;
 
       float line = clamp(max(max(sil, crease), colourEdge), 0.0, 1.0) * 0.82 * strength;
       // the hand-drawn wobble: ink is a little lighter here and there
-      line *= 0.78 + 0.22 * noise(gl_FragCoord.xy * 0.35);
-      vec3 col = mix(base.rgb, ink, line);
+      line *= 1.0 - wobble + wobble * noise(gl_FragCoord.xy * 0.35);
+      vec3 baseCol = base.rgb;
+      if (posterize > 0.5) baseCol = floor(baseCol * posterize + 0.5) / posterize;
+      vec3 col = mix(baseCol, ink, line);
 
       // paper: fine grain plus a soft wash so flat colours aren't perfectly even
       float g = hash(floor(gl_FragCoord.xy / 1.5)) - 0.5;
-      float wash = noise(gl_FragCoord.xy / 90.0) - 0.5;
-      col *= 1.0 + (g * 0.055 + wash * 0.07) * grain;
+      float blot = noise(gl_FragCoord.xy / washScale) - 0.5;
+      col *= 1.0 + g * 0.055 * grain + blot * 0.07 * wash;
 
       // navy vignette like Interview Quest's walk view
       vec2 q = vUv - 0.5;
       float v = smoothstep(0.38, 0.85, length(q * vec2(1.15, 1.0)));
-      col = mix(col, vignette, v * 0.55);
+      col = mix(col, vignette, v * vignetteStrength);
       gl_FragColor = vec4(col, 1.0);
     }
   `,
@@ -195,7 +227,7 @@ const inkShader = {
 class InkPass extends Pass {
   material: THREE.ShaderMaterial;
   private quad: FullScreenQuad;
-  constructor(private camera: THREE.OrthographicCamera) {
+  constructor(private camera: THREE.OrthographicCamera | THREE.PerspectiveCamera) {
     super();
     this.material = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.clone(inkShader.uniforms),
@@ -212,6 +244,11 @@ class InkPass extends Pass {
     u.tDepth.value = readBuffer.depthTexture;
     u.cameraNear.value = this.camera.near;
     u.cameraFar.value = this.camera.far;
+    const cam = this.camera;
+    u.isOrtho.value = cam instanceof THREE.OrthographicCamera ? 1 : 0;
+    if (cam instanceof THREE.PerspectiveCamera) {
+      u.perspK.value = (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2)) / Math.max(1, u.resolution.value.y);
+    }
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
     this.quad.render(renderer);
   }
@@ -231,7 +268,7 @@ export interface Painterly {
   setWorldPerPixel(v: number): void;
 }
 
-export function createPainterly(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.OrthographicCamera, w: number, h: number): Painterly {
+export function createPainterly(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.OrthographicCamera | THREE.PerspectiveCamera, w: number, h: number): Painterly {
   const pr = renderer.getPixelRatio();
   const target = new THREE.WebGLRenderTarget(Math.round(w * pr), Math.round(h * pr), {
     type: THREE.HalfFloatType,
