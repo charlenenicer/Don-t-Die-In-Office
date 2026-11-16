@@ -100,4 +100,39 @@ export const DEFAULT_VARIANT: VariantConfig = {
   style: PAINTED_STYLE,
 };
 
-export const VARIANT: VariantConfig = DEFAULT_VARIANT;
+/**
+ * Experiment: close over-the-shoulder 3/4 camera + chunky low-poly flat colour.
+ * A perspective camera sits just behind and above the player's shoulder, so
+ * the office feels big and you see people at eye level. Faceted flat shading
+ * with two hard light bands, saturated flat colours, thick even outlines and no
+ * paper texture: a toy-diorama look.
+ */
+export const VARIANT: VariantConfig = {
+  name: 'exp/shoulder-lowpoly',
+  camera: 'shoulder',
+  pitchDeg: 24,
+  yawDeg: 25,
+  fov: 50,
+  distance: 11,
+  zoom: 1,
+  style: {
+    ...PAINTED_STYLE,
+    ramp: [150, 255],
+    flatShading: true,
+    saturationKeep: 0.95,
+    lightnessFloor: 0.08,
+    lightnessCeil: 0.86,
+    paperWash: 0.03,
+    background: '#2b3a55',
+    ink: '#151a24',
+    inkStrength: 1,
+    inkWidth: 2,
+    inkWobble: 0,
+    colourEdge: 0.25,
+    grain: 0,
+    wash: 0,
+    vignette: '#2b3a55',
+    vignetteStrength: 0.35,
+  },
+};
+
