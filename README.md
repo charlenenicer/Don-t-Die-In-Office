@@ -35,6 +35,8 @@ Open Plan shares its look with [Interview Quest](https://interview-quest-theta.v
 - **Walls never hide you:** rooms are closed boxes. Their contents appear when you reach the door, and the wall facing the camera is cut away while you're inside. Every frame, rays from the camera to your feet, chest and head (and to either side) hide any wall in between, including the front wall when the camera backs out past it. Rooms and areas get small labels on the floor, like Interview Quest's street names.
 - **Props:** desks with monitors, mugs and paper stacks; plants; whiteboards; the copier; the lunch room with its fridge, vending machine and tables; a wall clock; the lounges and the fun zone.
 - **Characters:** chunky, illustrated coworkers in distinct outfits. Their name tags use Interview Quest's NPC label style, and when you're close a tag grows to show the role and the talk key.
+- **Walking:** a natural walk cycle (`src/gait.ts`). The stride follows the distance actually walked, not the clock, so feet keep pace with the floor and stop when a wall stops you. Legs swing alternately with the opposite arm, the body bobs twice a stride, leans slightly forward and twists a touch at the hips. Turns ease round the short way at a capped speed, never snapping. Stopping settles the feet together, and standing characters breathe and glance around. With `prefers-reduced-motion`, bob and sway are toned right down and breathing stops.
+- **Hair:** each style is two to four smooth shapes: a cap shell around the skull (open for the face, so the hairline is one clean ink line), plus a fall for long hair, a fringe, bun, quiff or ponytail. Every character keeps their own colour and silhouette.
 - **HUD:** Interview Quest's UI tokens and components: a top bar with brand and clock chips, dark translucent cards, teal-to-amber stat bars, amber gradient buttons, the bottom dialogue box for offers (with a portrait badge in the coworker's outfit colour), the result card for the Friday review, and matching toasts and conversation panel.
 - **Accessibility and performance:** with `prefers-reduced-motion`, the camera snaps instead of easing, idle bobbing and marker pulsing stop, and UI animations are turned off. The shadow map is drawn once, because furniture doesn't move. Render resolution is capped at 1.75×, and drops to 1× if frames run slow.
 
@@ -43,6 +45,10 @@ Open Plan shares its look with [Interview Quest](https://interview-quest-theta.v
 | ![Before: third-person pastel view](docs/media/restyle-before.jpg) | ![After: same camera, painted style](docs/media/origcam-reception.jpg) |
 
 ![Walking from the open office into the manager's office: the camera follows and the front wall cuts away](docs/media/origcam-enter-room.gif)
+
+| Walk cycle | Hair, before and after |
+| --- | --- |
+| ![Close-up of the player walking, stopping and turning](docs/media/walk-cycle.gif) | ![Hair before (many spheres) and after (a few smooth shapes)](docs/media/hair-before-after.jpg) |
 
 | Manager's office | Against the front windows |
 | --- | --- |
@@ -62,7 +68,7 @@ Open Plan shares its look with [Interview Quest](https://interview-quest-theta.v
 - **Voice integration** via Alebex Voice API
 - **Demo mode** (fully playable without API key)
 - **Agent setup script** (idempotent, creates/updates agents)
-- **Tests** (vitest: game engine, webhook signatures, prompt validation, follow and experiment cameras, input mapping, wall occlusion, palette, cutaway, HUD)
+- **Tests** (vitest: game engine, webhook signatures, prompt validation, follow and experiment cameras, input mapping, wall occlusion, walk cycle, characters and hair, palette, cutaway, HUD)
 
 ## 🚀 Quick Start
 
@@ -254,6 +260,8 @@ Covers:
 - ✅ Experiment cameras: isometric offset, orthographic frustum, zoom clamping, per-mode framing
 - ✅ WASD/arrow mapping identical to the original for every key combination (diagonals normalised)
 - ✅ Wall occlusion samples feet, chest and head
+- ✅ Walk cycle: stride phase advances with distance (not time), alternating legs and opposite arms, bob/lean, settling to rest, idle breathing, reduced motion, smooth capped turns
+- ✅ Character rig and hair: hinged limbs at rest when idle, at most 4 hair meshes per style, hair colours kept, distinct silhouettes, face left clear
 - ✅ Painterly palette mapping, and UI tokens kept in sync with the stylesheet
 - ✅ Dollhouse cutaway for the overhead experiment cameras (which walls stay, get cut, or hide)
 - ✅ HUD markup hooks, stat tones, name tags and area labels

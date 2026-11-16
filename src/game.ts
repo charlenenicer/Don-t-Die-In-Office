@@ -15,6 +15,8 @@ import { FIRE_INTENSITY, buildWorld, roomAt } from './visuals';
 import { flicker, setupLighting } from './lighting';
 import type { Lighting } from './lighting';
 import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
+import { advanceGait, createGait, gaitPose, turnToward } from './gait';
+import type { GaitState } from './gait';
 import type { CharacterRig } from './people';
 import { PICKUP_CLEARANCE, createPickup } from './pickups';
 import type { ActivitySpot, Collider, Room, Seat } from './visuals';
@@ -55,7 +57,8 @@ export class Game {
   private playerRig: CharacterRig;
   private lighting: Lighting;
   private fireLight: THREE.PointLight;
-  private walkAmount = 0;
+  /** the player's walk cycle: stride phase driven by distance walked */
+  private gait: GaitState = createGait();
   private colliders: Collider[] = [];
   private clockAccumulator = 0;
   private seats: Seat[] = [];
@@ -331,6 +334,8 @@ export class Game {
     // WASD / arrows: relative to the camera yaw; with main's camera (yaw 0) that is main's mapping, W = north (-z)
     const move = this.debugMove ?? screenMove(inputFromKeys(this.keys), VARIANT.yawDeg);
     const direction = new THREE.Vector3(move.x, 0, move.z);
+    const startX = this.playerPosition.x;
+    const startZ = this.playerPosition.z;
 
     if (this.activity) {
       if (direction.length() > 0) {
@@ -383,22 +388,21 @@ export class Game {
 
       this.player.position.copy(this.playerPosition);
 
-      // Turn smoothly toward the movement direction
+      // Turn smoothly toward the movement direction (eased and speed-capped, never a snap)
       const targetYaw = Math.atan2(direction.x, direction.z);
-      let diff = targetYaw - this.player.rotation.y;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      this.player.rotation.y += diff * Math.min(1, delta * 12);
+      this.player.rotation.y = this.reducedMotion ? targetYaw : turnToward(this.player.rotation.y, targetYaw, delta);
     }
 
     // Sit pose eases in and out; the body drops to seat height
     this.sitAmount += ((this.currentSeat ? 1 : 0) - this.sitAmount) * Math.min(1, delta * 8);
     this.player.position.set(this.playerPosition.x, this.lastSitY * this.sitAmount, this.playerPosition.z);
 
-    // Walk cycle eases in and out
-    const target = direction.length() > 0 ? 1 : 0;
-    this.walkAmount += (target - this.walkAmount) * Math.min(1, delta * 10);
+    // Walk cycle: the stride follows the distance really covered (so walking into a
+    // wall doesn't moonwalk), capped so a teleport or a long frame isn't a sprint
+    const travelled = this.currentSeat ? 0 : Math.min(Math.hypot(this.playerPosition.x - startX, this.playerPosition.z - startZ), speed * Math.min(delta, 0.1) * 1.5);
+    this.gait = advanceGait(this.gait, travelled, delta, this.reducedMotion);
     this.reachAmount += ((this.activity ? 1 : 0) - this.reachAmount) * Math.min(1, delta * 8);
-    animateCharacter(this.playerRig, this.clock.elapsedTime, this.walkAmount, this.sitAmount, this.reachAmount);
+    animateCharacter(this.playerRig, gaitPose(this.gait, this.clock.elapsedTime, this.reducedMotion), this.clock.elapsedTime, this.sitAmount, this.reachAmount, this.reducedMotion);
 
     // fun-zone props: the one being played animates, the rest settle back
     const hand = this.handPosition();
@@ -796,16 +800,17 @@ export class Game {
 
   private updateNPCs(delta: number) {
     this.characters.forEach((mesh, id) => {
-      const time = this.reducedMotion ? 0 : this.clock.elapsedTime + mesh.userData.bobOffset;
-      animateCharacter(mesh.userData.rig as CharacterRig, time, 0, mesh.userData.sitting ? 1 : 0);
+      // NPCs stand or sit at their posts; they share the walk cycle so idle breathing matches the player
+      const time = this.clock.elapsedTime + mesh.userData.bobOffset;
+      const gait = advanceGait((mesh.userData.gait as GaitState | undefined) ?? createGait(), 0, delta, this.reducedMotion);
+      mesh.userData.gait = gait;
+      animateCharacter(mesh.userData.rig as CharacterRig, gaitPose(gait, time, this.reducedMotion), time, mesh.userData.sitting ? 1 : 0, 0, this.reducedMotion);
 
       // Turn to face the player when they're close
       const dx = this.playerPosition.x - mesh.position.x;
       const dz = this.playerPosition.z - mesh.position.z;
       if (Math.hypot(dx, dz) < 7) {
-        let diff = Math.atan2(dx, dz) - mesh.rotation.y;
-        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        mesh.rotation.y += diff * Math.min(1, delta * 4);
+        mesh.rotation.y = turnToward(mesh.rotation.y, Math.atan2(dx, dz), delta, 4, 3);
       }
     });
   }
