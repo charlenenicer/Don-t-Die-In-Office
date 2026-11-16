@@ -100,4 +100,40 @@ export const DEFAULT_VARIANT: VariantConfig = {
   style: PAINTED_STYLE,
 };
 
-export const VARIANT: VariantConfig = DEFAULT_VARIANT;
+/**
+ * Experiment: fixed per-room camera + pixel art.
+ * The camera doesn't follow you: each room or area has its own fixed iso shot,
+ * and it cuts to the next one as you cross over (like classic adventure games).
+ * Rendered at a third of the resolution with nearest-neighbour upscaling, a
+ * posterised palette and crisp one-pixel outlines.
+ */
+export const VARIANT: VariantConfig = {
+  name: 'exp/room-snap-pixel',
+  camera: 'room-snap',
+  pitchDeg: 30,
+  yawDeg: 45,
+  fov: 40,
+  distance: 70,
+  zoom: 1.15,
+  style: {
+    ...PAINTED_STYLE,
+    ramp: [105, 180, 255],
+    saturationKeep: 0.92,
+    lightnessFloor: 0.06,
+    lightnessCeil: 0.9,
+    paperWash: 0.04,
+    background: '#1a1426',
+    ink: '#1a1426',
+    inkStrength: 1,
+    inkWobble: 0,
+    colourEdge: 0.5,
+    grain: 0,
+    wash: 0,
+    vignette: '#1a1426',
+    vignetteStrength: 0.35,
+    posterize: 7,
+    pixelScale: 1 / 3,
+    bodyClass: 'variant-pixel',
+  },
+};
+

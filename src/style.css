@@ -399,3 +399,19 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- pixel-art HUD for the experiment: square corners, hard shadows, monospace ---- */
+body.variant-pixel { --font: ui-monospace, "SF Mono", Menlo, Consolas, monospace; --radius: 0; font-family: var(--font); }
+body.variant-pixel .card, body.variant-pixel .chip, body.variant-pixel .btn, body.variant-pixel .hint,
+body.variant-pixel .character-label, body.variant-pixel .area-label, body.variant-pixel .dlg-box, body.variant-pixel .dlg-portrait,
+body.variant-pixel .result-card, body.variant-pixel .toast, body.variant-pixel .transcript-panel, body.variant-pixel .mode-indicator,
+body.variant-pixel .stat-bar, body.variant-pixel .stat-fill, body.variant-pixel .brand-mark, body.variant-pixel .inventory-item {
+  border-radius: 0 !important;
+  backdrop-filter: none;
+}
+body.variant-pixel .card, body.variant-pixel .dlg-box, body.variant-pixel .result-card, body.variant-pixel .hint, body.variant-pixel .toast {
+  border-width: 2px;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.55);
+}
+body.variant-pixel .stat-fill { background-image: repeating-linear-gradient(90deg, transparent 0 6px, rgba(0, 0, 0, 0.25) 6px 8px); }
+body.variant-pixel .panel-title, body.variant-pixel .character-label, body.variant-pixel .area-label { text-transform: uppercase; letter-spacing: 0.04em; }
