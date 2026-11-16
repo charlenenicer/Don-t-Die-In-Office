@@ -100,4 +100,40 @@ export const DEFAULT_VARIANT: VariantConfig = {
   style: PAINTED_STYLE,
 };
 
-export const VARIANT: VariantConfig = DEFAULT_VARIANT;
+/**
+ * Experiment: follow camera with room transitions + soft watercolour.
+ * A perspective camera trails behind the player (like the original game but
+ * higher); stepping into a room glides it up to frame the whole room. Pastel,
+ * low-contrast washes on warm paper, thin violet-sepia ink, big soft blotches.
+ */
+export const VARIANT: VariantConfig = {
+  name: 'exp/follow-cam-watercolor',
+  camera: 'follow-rooms',
+  pitchDeg: 38,
+  yawDeg: 0,
+  fov: 42,
+  distance: 24,
+  zoom: 1,
+  style: {
+    ...PAINTED_STYLE,
+    ramp: [150, 198, 235, 255],
+    softRamp: true,
+    saturationKeep: 0.66,
+    lightnessFloor: 0.12,
+    lightnessCeil: 0.9,
+    paperWash: 0.16,
+    paper: '#f6eddc',
+    background: '#efe6d4',
+    ink: '#6b5a7a',
+    inkStrength: 0.55,
+    inkWobble: 0.55,
+    colourEdge: 0.12,
+    grain: 1.5,
+    wash: 3.6,
+    washScale: 150,
+    vignette: '#e6d6bb',
+    vignetteStrength: 0.5,
+    bodyClass: 'variant-watercolor',
+  },
+};
+

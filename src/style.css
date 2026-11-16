@@ -399,3 +399,26 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- light paper HUD for the experiment: same Interview Quest components, light panels ---- */
+body.variant-watercolor {
+  --panel: rgba(250, 244, 232, 0.93);
+  --line: rgba(70, 50, 30, 0.16);
+  --line2: rgba(70, 50, 30, 0.28);
+  --text: #3b2f2a;
+  --muted: #7d6c5e;
+  --accent2: #b86a12;
+  background: #efe6d4;
+}
+body.variant-watercolor .card, body.variant-watercolor .topbar, body.variant-watercolor .hint, body.variant-watercolor .character-label, body.variant-watercolor .area-label,
+body.variant-watercolor .dlg-box, body.variant-watercolor .toast, body.variant-watercolor .transcript-panel, body.variant-watercolor .result-card,
+body.variant-watercolor .zoom-controls .btn {
+  background: rgba(250, 244, 232, 0.93);
+  color: var(--text);
+  box-shadow: 0 6px 22px rgba(90, 70, 50, 0.18);
+}
+body.variant-watercolor .stat-bar { background: rgba(70, 50, 30, 0.12); }
+body.variant-watercolor .chip { background: rgba(255, 255, 255, 0.35); }
+body.variant-watercolor .area-label { color: #5b4a3c; }
+body.variant-watercolor .choice-modal, body.variant-watercolor .game-over-modal { background: rgba(80, 60, 40, 0.28); }
+body.variant-watercolor .card, body.variant-watercolor .dlg-box, body.variant-watercolor .result-card { border-radius: 18px; }
