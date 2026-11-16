@@ -1,10 +1,12 @@
 /**
  * One place that describes how the world is framed and drawn. The main branch
- * uses DEFAULT_VARIANT (fixed isometric follow camera + painted toon look);
+ * uses DEFAULT_VARIANT (main's original third-person follow camera + painted toon look);
  * experiment branches only change `VARIANT` below.
  */
 
 export type CameraMode =
+  /** the main branch's low third-person camera: trails 5-9.5 units behind the player, eased */
+  | 'original'
   /** orthographic iso view that follows the player */
   | 'iso-follow'
   /** perspective follow camera that glides to frame a room when you walk in */
@@ -91,12 +93,13 @@ export const PAINTED_STYLE: StyleConfig = {
 
 export const DEFAULT_VARIANT: VariantConfig = {
   name: 'restyle-isometric-painted',
-  camera: 'iso-follow',
-  pitchDeg: 35,
-  yawDeg: 45,
-  fov: 40,
-  distance: 70,
-  zoom: 1.3,
+  // the camera and controls are main's, unchanged: W walks north (away from the camera)
+  camera: 'original',
+  pitchDeg: 0,
+  yawDeg: 0,
+  fov: 60,
+  distance: 0,
+  zoom: 1,
   style: PAINTED_STYLE,
 };
 

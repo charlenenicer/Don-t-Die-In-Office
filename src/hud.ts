@@ -66,7 +66,12 @@ export const INITIAL_STATS: GameStats = { energy: 80, reputation: 50, performanc
  * left, clock chips top centre, inventory bottom right. Class names are the ones
  * main.ts updates.
  */
-export function hudMarkup(voiceAvailable: boolean, day: string, stats: GameStats = INITIAL_STATS): string {
+/** The idle hint bar text; only the experiment cameras zoom. */
+export function moveHint(zoom: boolean): string {
+  return zoom ? 'WASD/Arrows to move • E to interact • scroll to zoom' : 'WASD/Arrows to move • E to interact';
+}
+
+export function hudMarkup(voiceAvailable: boolean, day: string, stats: GameStats = INITIAL_STATS, zoom = false): string {
   return `
         <div class="hud">
           <div class="topbar">
@@ -95,10 +100,11 @@ export function hudMarkup(voiceAvailable: boolean, day: string, stats: GameStats
             <div class="inventory-items"></div>
           </div>
 
+${zoom ? `
           <div class="zoom-controls" role="group" aria-label="Zoom">
             <button class="btn ghost sm zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
             <button class="btn ghost sm zoom-out" title="Zoom out (−)" aria-label="Zoom out">−</button>
-          </div>
+          </div>` : ''}
         </div>`;
 }
 

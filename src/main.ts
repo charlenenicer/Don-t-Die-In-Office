@@ -3,7 +3,11 @@ import { formatClock, hoursUntilReview, DAY_NAMES, GAME_HOURS_PER_REAL_SECOND, P
 import type { GameState, ReviewOutcome } from './types';
 import { meetsPromotionBar } from './game-engine';
 import { CHARACTERS } from './characters';
-import { hudMarkup, initials, statTone } from './hud';
+import { hudMarkup, initials, moveHint, statTone } from './hud';
+import { zoomable } from './camera-rig';
+import { VARIANT } from './variant';
+
+const ZOOM = zoomable(VARIANT.camera);
 import type { StatKey } from './hud';
 import { lookForCharacter } from './people';
 import { paint } from './palette';
@@ -45,11 +49,9 @@ class App {
         <canvas id="game-canvas"></canvas>
         <div class="ui-overlay"></div>
         
-        ${hudMarkup(available, DAY_NAMES[0])}
+        ${hudMarkup(available, DAY_NAMES[0], undefined, ZOOM)}
 
-        <div class="hint">
-          WASD/Arrows to move • E to interact • scroll to zoom
-        </div>
+        <div class="hint">${moveHint(ZOOM)}</div>
 
         <div class="transcript-panel">
           <div class="transcript-header">
@@ -221,7 +223,7 @@ class App {
     const nearbyChar = this.game.getNearbyCharacter();
     const nearbyItem = this.game.getNearbyItem();
 
-    let text = 'WASD/Arrows to move • E to interact • scroll to zoom';
+    let text = moveHint(ZOOM);
     const playing = this.game.getActivityAction();
     const nearbyAction = this.game.getNearestMarkerAction();
     if (playing) {

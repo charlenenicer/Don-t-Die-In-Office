@@ -30,7 +30,8 @@ import { applyCutaway } from './cutaway';
 import { addIsoDecor } from './decor';
 import { paint } from './palette';
 import { VARIANT } from './variant';
-import { CameraRig } from './camera-rig';
+import { CameraRig, zoomable } from './camera-rig';
+import { OCCLUSION_HEIGHTS, OCCLUSION_LATERALS } from './occlusion';
 import { AREA_LABELS, nameTagHtml } from './hud';
 
 /** Respect the OS "reduce motion" setting: no camera easing, idle bobbing or pulsing. */
@@ -103,7 +104,7 @@ export class Game {
     this.scene.background = new THREE.Color(VARIANT.style.background);
     if (VARIANT.style.bodyClass) document.body.classList.add(VARIANT.style.bodyClass);
 
-    // Camera: fixed isometric view (35° down, from the south-east) that follows the player
+    // Camera: main's low third-person camera that eases after the player (experiments swap it in variant.ts)
     this.rig = new CameraRig(VARIANT, AREA_LABELS, container.clientWidth / container.clientHeight, container.clientHeight, this.playerPosition);
 
     // Renderer setup
@@ -131,8 +132,9 @@ export class Game {
     this.walls = world.walls;
     this.activities = world.activities;
     this.fireLight = world.fireLight;
-    // dollhouse cutaway so rooms read from above, then the cozy extras and window light
-    applyCutaway(world.root, world.walls);
+    // the overhead experiment cameras need the dollhouse cutaway so rooms read from above;
+    // main's camera keeps full-height walls and cuts away whatever stands in front of the player
+    if (VARIANT.camera !== 'original') applyCutaway(world.root, world.walls);
     addIsoDecor(world.root, this.colliders);
     for (const o of this.scene.children) if (o.userData.exterior) o.visible = false;
     this.createSeatMarkers();
@@ -265,16 +267,17 @@ export class Game {
       else if (marker?.userData.activity) this.startActivity(marker.userData.activity as ActivitySpot);
     });
 
-    // zoom: mouse wheel / trackpad pinch, or + and - keys
-    dom.addEventListener('wheel', (e) => {
+    // zoom (experiment cameras only; main's camera has a fixed distance): wheel / pinch, or + and -
+    const canZoom = zoomable(VARIANT.camera);
+    if (canZoom) dom.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.setZoom(zoomBy(this.rig.getZoom(), -Math.sign(e.deltaY)));
     }, { passive: false });
 
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key.toLowerCase());
-      if (e.key === '+' || e.key === '=') this.setZoom(zoomBy(this.rig.getZoom(), 1));
-      if (e.key === '-' || e.key === '_') this.setZoom(zoomBy(this.rig.getZoom(), -1));
+      if (canZoom && (e.key === '+' || e.key === '=')) this.setZoom(zoomBy(this.rig.getZoom(), 1));
+      if (canZoom && (e.key === '-' || e.key === '_')) this.setZoom(zoomBy(this.rig.getZoom(), -1));
       
       if (e.key.toLowerCase() === 'e') {
         this.interact();
@@ -325,7 +328,7 @@ export class Game {
 
   private updatePlayer(delta: number) {
     const speed = 5;
-    // WASD / arrows move along the screen, not the world axes, so W is always "up" in the iso view
+    // WASD / arrows: relative to the camera yaw; with main's camera (yaw 0) that is main's mapping, W = north (-z)
     const move = this.debugMove ?? screenMove(inputFromKeys(this.keys), VARIANT.yawDeg);
     const direction = new THREE.Vector3(move.x, 0, move.z);
 
@@ -404,7 +407,7 @@ export class Game {
       spot.animate(active ? this.activity!.elapsed : 0, active, hand);
     }
 
-    // Isometric camera eases after the player (snaps under reduced motion), and eases its zoom
+    // Camera eases after the player (snaps under reduced motion)
     this.rig.update(delta, this.playerPosition, roomAt(this.rooms, this.playerPosition.x, this.playerPosition.z), this.reducedMotion);
     this.painterly.setWorldPerPixel(this.rig.worldPerPixel());
 
@@ -698,13 +701,63 @@ export class Game {
   }
 
   /**
-   * With the dollhouse cutaway every room is visible from above, so nothing is
-   * hidden any more; we only track which room the player is in, which still gates
-   * who you can talk to and what you can pick up.
+   * main's camera: rooms are closed boxes whose contents are only drawn when the
+   * player is at the door or inside, the wall facing the camera is cut away while
+   * inside, and any wall between the camera and the player is hidden so the player
+   * is never behind one. The overhead experiment cameras see every room through the
+   * dollhouse cutaway, so for them we only track which room the player is in (that
+   * still gates who you can talk to and what you can pick up).
    */
   private updateRooms() {
     const p = this.playerPosition;
     this.playerRoom = roomAt(this.rooms, p.x, p.z);
+    if (VARIANT.camera !== 'original') return;
+    const near = roomAt(this.rooms, p.x, p.z, 0.6);
+    for (const room of this.rooms) room.interior.visible = room === near;
+
+    for (const wall of this.walls) wall.visible = true;
+    for (const room of this.rooms) {
+      for (const o of room.front) o.visible = room !== this.playerRoom;
+    }
+    const from = this.camera.position;
+    const aim = new THREE.Vector3();
+    for (const h of OCCLUSION_HEIGHTS) {
+      for (const lateral of OCCLUSION_LATERALS) {
+        aim.set(p.x + lateral, h, p.z).sub(from);
+        const dist = aim.length();
+        this.occlusionRay.set(from, aim.normalize());
+        this.occlusionRay.far = Math.max(0, dist - 0.3);
+        for (const hit of this.occlusionRay.intersectObjects(this.walls, false)) hit.object.visible = false;
+      }
+    }
+    this.characters.forEach((mesh) => {
+      const room = mesh.userData.room as Room | null;
+      mesh.visible = !room || room === near;
+    });
+    this.itemMeshes.forEach((mesh) => {
+      const room = mesh.userData.room as Room | null;
+      mesh.visible = !room || room === near;
+    });
+  }
+
+  /** Walls currently drawn that a straight line from the camera to the player passes through (should always be none). */
+  wallsBlockingPlayer(): number {
+    const p = this.playerPosition;
+    const from = this.camera.position;
+    const ray = new THREE.Raycaster();
+    const aim = new THREE.Vector3();
+    let n = 0;
+    for (const h of OCCLUSION_HEIGHTS) {
+      aim.set(p.x, h, p.z).sub(from);
+      const dist = aim.length();
+      ray.set(from, aim.normalize());
+      ray.far = Math.max(0, dist - 0.3);
+      n += ray.intersectObjects(this.walls, false).filter((hit) => {
+        for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) if (!o.visible) return false;
+        return true;
+      }).length;
+    }
+    return n;
   }
 
   private checkNearbyInteractables() {

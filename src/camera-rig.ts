@@ -37,6 +37,7 @@ export function roomCenter(r: RoomBox): [number, number] {
 export function framingFor(mode: CameraMode, v: Pick<VariantConfig, 'pitchDeg'>, player: { x: number; z: number }, room: RoomBox | null, areas: Area[]): Framing {
   const follow: Framing = { target: [player.x, 0.8, player.z], zoomFactor: 1, snap: false, pitchDeg: v.pitchDeg };
   switch (mode) {
+    case 'original':
     case 'iso-follow':
       return follow;
     case 'tilted-zoom':
@@ -61,7 +62,30 @@ export function framingFor(mode: CameraMode, v: Pick<VariantConfig, 'pitchDeg'>,
 }
 
 export function isPerspective(mode: CameraMode): boolean {
-  return mode === 'follow-rooms' || mode === 'shoulder';
+  return mode === 'original' || mode === 'follow-rooms' || mode === 'shoulder';
+}
+
+/** Only the experimental cameras zoom; main's camera has a fixed distance. */
+export function zoomable(mode: CameraMode): boolean {
+  return mode !== 'original';
+}
+
+/** main's camera: where it starts, and the point it looks at relative to the player. */
+export const ORIGINAL_CAMERA = { fov: 60, near: 0.5, far: 1600, height: 5.5, lookY: 1.3, lookAhead: 1, ease: 5, start: [0, 5.5, 23.5] as const };
+
+/**
+ * Where main's camera wants to be: 5.5 up, 9.5 behind the player (south, +z),
+ * but never further south than z = 23.5 unless that would put it closer than 5
+ * behind them, and a little in from the side walls. Copied from main's game.ts.
+ */
+export function originalCameraTarget(player: { x: number; z: number }): [number, number, number] {
+  const pz = player.z;
+  return [Math.max(-22.5, Math.min(22.5, player.x)), ORIGINAL_CAMERA.height, Math.max(Math.min(23.5, pz + 9.5), pz + 5)];
+}
+
+/** main eases the camera by min(1, delta * 5) per frame; reduced motion snaps. */
+export function originalEase(delta: number, reducedMotion: boolean): number {
+  return reducedMotion ? 1 : Math.min(1, Math.max(0, delta) * ORIGINAL_CAMERA.ease);
 }
 
 export class CameraRig {
@@ -80,7 +104,11 @@ export class CameraRig {
     this.pitch = v.pitchDeg;
     this.aspect = aspect;
     this.heightPx = heightPx;
-    if (isPerspective(v.camera)) {
+    if (v.camera === 'original') {
+      const o = ORIGINAL_CAMERA;
+      this.camera = new THREE.PerspectiveCamera(o.fov, aspect, o.near, o.far);
+      this.camera.position.set(...o.start);
+    } else if (isPerspective(v.camera)) {
       this.camera = new THREE.PerspectiveCamera(v.fov, aspect, 0.5, 220);
     } else {
       const f = frustum(aspect, this.zoom);
@@ -117,6 +145,13 @@ export class CameraRig {
   }
 
   update(delta: number, player: { x: number; z: number }, room: RoomBox | null, reducedMotion: boolean) {
+    if (this.v.camera === 'original') {
+      const [x, y, z] = originalCameraTarget(player);
+      this.camera.position.lerp(new THREE.Vector3(x, y, z), originalEase(delta, reducedMotion));
+      this.target.set(player.x, ORIGINAL_CAMERA.lookY, player.z - ORIGINAL_CAMERA.lookAhead);
+      this.camera.lookAt(this.target);
+      return false;
+    }
     const f = framingFor(this.v.camera, this.v, player, room, this.areas);
     const key = `${f.target[0].toFixed(2)},${f.target[2].toFixed(2)}`;
     const cut = f.snap && key !== this.lastKey;

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AREA_LABELS, STAT_KEYS, escapeHtml, hudMarkup, initials, nameTagHtml, statTone } from '../src/hud';
+import { AREA_LABELS, STAT_KEYS, escapeHtml, hudMarkup, moveHint, initials, nameTagHtml, statTone } from '../src/hud';
 import { CHARACTERS } from '../src/characters';
 
 describe('HUD markup', () => {
@@ -26,12 +26,19 @@ describe('HUD markup', () => {
     expect(hudMarkup(true, 'Wednesday')).toContain('Voice Mode');
   });
 
-  it('uses Interview Quest panel styling (card, chips, panel titles) and has zoom buttons', () => {
+  it('uses Interview Quest panel styling (card, chips, panel titles)', () => {
     expect(html).toContain('stats-panel card');
     expect(html).toContain('chip time');
     expect(html).toContain('panel-title');
-    expect(html).toContain('zoom-in');
-    expect(html).toContain('zoom-out');
+  });
+
+  it('only shows zoom buttons and the zoom hint for cameras that zoom', () => {
+    expect(html).not.toContain('zoom-in');
+    const zoomy = hudMarkup(false, 'Wednesday', undefined, true);
+    expect(zoomy).toContain('zoom-in');
+    expect(zoomy).toContain('zoom-out');
+    expect(moveHint(false)).toBe('WASD/Arrows to move • E to interact');
+    expect(moveHint(true)).toContain('scroll to zoom');
   });
 
   it('escapes the day name', () => {

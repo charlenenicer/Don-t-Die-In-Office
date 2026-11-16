@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { framingFor, isPerspective, nearestArea, roomCenter } from '../src/camera-rig';
+import { framingFor, isPerspective, nearestArea, ORIGINAL_CAMERA, originalCameraTarget, originalEase, roomCenter, zoomable } from '../src/camera-rig';
+import { inputFromKeys, screenMove } from '../src/iso';
+import { OCCLUSION_HEIGHTS, OCCLUSION_LATERALS } from '../src/occlusion';
 import { AREA_LABELS } from '../src/hud';
 import { VARIANT } from '../src/variant';
 
@@ -53,13 +55,73 @@ describe('camera framing per mode', () => {
 });
 
 describe('active variant', () => {
-  it('has a sane camera and style', () => {
-    expect(VARIANT.pitchDeg).toBeGreaterThan(10);
-    expect(VARIANT.pitchDeg).toBeLessThan(80);
+  it('is main\'s original camera with the painted style', () => {
+    expect(VARIANT.camera).toBe('original');
+    expect(isPerspective(VARIANT.camera)).toBe(true);
+    expect(zoomable(VARIANT.camera)).toBe(false);
     expect(VARIANT.style.ramp.length).toBeGreaterThanOrEqual(2);
     expect([...VARIANT.style.ramp].sort((a, b) => a - b)).toEqual(VARIANT.style.ramp);
     expect(VARIANT.style.pixelScale).toBeGreaterThan(0);
     expect(VARIANT.style.pixelScale).toBeLessThanOrEqual(1);
     expect(VARIANT.style.saturationKeep).toBeLessThanOrEqual(1);
+  });
+});
+
+/** main's game.ts, verbatim: world-axis WASD, normalised */
+function mainMove(keys: Set<string>): { x: number; z: number } {
+  let x = 0, z = 0;
+  if (keys.has('w') || keys.has('arrowup')) z -= 1;
+  if (keys.has('s') || keys.has('arrowdown')) z += 1;
+  if (keys.has('a') || keys.has('arrowleft')) x -= 1;
+  if (keys.has('d') || keys.has('arrowright')) x += 1;
+  const l = Math.hypot(x, z);
+  return l ? { x: x / l, z: z / l } : { x: 0, z: 0 };
+}
+
+describe('main\'s original camera', () => {
+  it('starts where main\'s did, with main\'s lens', () => {
+    expect(ORIGINAL_CAMERA.start).toEqual([0, 5.5, 23.5]);
+    expect(ORIGINAL_CAMERA.fov).toBe(60);
+    expect(ORIGINAL_CAMERA.near).toBe(0.5);
+    // the player spawns at (0, 16.4): main's start position is exactly its target there
+    expect(originalCameraTarget({ x: 0, z: 16.4 })).toEqual([0, 5.5, 23.5]);
+  });
+
+  it('sits 9.5 behind the player in the middle of the floor', () => {
+    expect(originalCameraTarget({ x: 4, z: -10 })).toEqual([4, 5.5, -0.5]);
+  });
+
+  it('stays inside the front wall until that would be closer than 5', () => {
+    expect(originalCameraTarget({ x: 0, z: 17 })[2]).toBe(23.5);
+    expect(originalCameraTarget({ x: 0, z: 21 })[2]).toBe(26);
+  });
+
+  it('keeps a little in from the side walls', () => {
+    expect(originalCameraTarget({ x: 24, z: 0 })[0]).toBe(22.5);
+    expect(originalCameraTarget({ x: -24, z: 0 })[0]).toBe(-22.5);
+  });
+
+  it('eases like main (min(1, delta * 5)) and snaps under reduced motion', () => {
+    expect(originalEase(0.1, false)).toBeCloseTo(0.5);
+    expect(originalEase(0.5, false)).toBe(1);
+    expect(originalEase(0.016, true)).toBe(1);
+  });
+
+  it('maps every key combination exactly like main (W walks north, away from the camera)', () => {
+    const names = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright'];
+    for (let mask = 0; mask < 1 << names.length; mask++) {
+      const keys = new Set(names.filter((_, i) => mask & (1 << i)));
+      const want = mainMove(keys);
+      const got = screenMove(inputFromKeys(keys), VARIANT.yawDeg);
+      expect(got.x).toBeCloseTo(want.x, 9);
+      expect(got.z).toBeCloseTo(want.z, 9);
+    }
+  });
+
+  it('checks head, chest and feet for walls in front of the player, including main\'s chest row', () => {
+    expect(OCCLUSION_HEIGHTS).toContain(1.2);
+    expect(Math.min(...OCCLUSION_HEIGHTS)).toBeLessThan(0.5);
+    expect(Math.max(...OCCLUSION_HEIGHTS)).toBeGreaterThan(1.7);
+    expect([...OCCLUSION_LATERALS]).toEqual([-0.7, 0, 0.7]);
   });
 });
