@@ -11,22 +11,45 @@ import { GAME_HOURS_PER_REAL_SECOND } from './types';
  */
 const WORLD_LIMIT = 24.2;
 import { VoiceClient } from './voice-client';
-import {
-  FIRE_INTENSITY, FOG_COLOR, buildWorld, createSkyTexture, roomAt,
-} from './visuals';
+import { FIRE_INTENSITY, buildWorld, roomAt } from './visuals';
 import { flicker, setupLighting } from './lighting';
 import type { Lighting } from './lighting';
 import { HIP_HEIGHT, PLAYER_LOOK, animateCharacter, createCharacter, lookForCharacter } from './people';
+import { advanceGait, createGait, gaitPose, turnToward } from './gait';
+import { WalkAwayTimer } from './call-ending';
+import type { GaitState } from './gait';
 import type { CharacterRig } from './people';
 import { PICKUP_CLEARANCE, createPickup } from './pickups';
 import type { ActivitySpot, Collider, Room, Seat } from './visuals';
 import {
   ACTIVITY_RULES, COOLDOWN_HOURS, absoluteHours, cooldownMinutesLeft, describeEffects,
 } from './activities';
+import {
+  inputFromKeys, screenMove, zoomBy,
+} from './iso';
+import { createBlobShadow, createPainterly, createRampTexture, toonify } from './painterly';
+import type { Painterly } from './painterly';
+import { applyCutaway } from './cutaway';
+import { addIsoDecor } from './decor';
+import { paint } from './palette';
+import { VARIANT } from './variant';
+import { CameraRig, zoomable } from './camera-rig';
+import { OCCLUSION_HEIGHTS, OCCLUSION_LATERALS } from './occlusion';
+import { AREA_LABELS, nameTagHtml } from './hud';
+
+/** Respect the OS "reduce motion" setting: no camera easing, idle bobbing or pulsing. */
+const prefersReducedMotion = (): boolean =>
+  typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 export class Game {
   private scene: THREE.Scene;
-  private camera: THREE.PerspectiveCamera;
+  private rig: CameraRig;
+  private get camera(): THREE.OrthographicCamera | THREE.PerspectiveCamera { return this.rig.camera; }
+  /** test hook: walk in this world direction instead of reading the keys */
+  debugMove: { x: number; z: number } | null = null;
+  private painterly: Painterly;
+  private reducedMotion = prefersReducedMotion();
+  private areaLabels: { el: HTMLElement; pos: THREE.Vector3 }[] = [];
   private renderer: THREE.WebGLRenderer;
   private engine: GameEngine;
   private voiceClient: VoiceClient;
@@ -35,7 +58,8 @@ export class Game {
   private playerRig: CharacterRig;
   private lighting: Lighting;
   private fireLight: THREE.PointLight;
-  private walkAmount = 0;
+  /** the player's walk cycle: stride phase driven by distance walked */
+  private gait: GaitState = createGait();
   private colliders: Collider[] = [];
   private clockAccumulator = 0;
   private seats: Seat[] = [];
@@ -68,6 +92,8 @@ export class Game {
   
   private keys: Set<string> = new Set();
   private nearbyCharacter: Character | null = null;
+  /** walking away from the coworker you're talking to ends the conversation */
+  private walkAway = new WalkAwayTimer();
   private nearbyItem: InventoryItem | null = null;
   
   private uiContainer: HTMLElement;
@@ -80,27 +106,26 @@ export class Game {
 
     // Scene setup
     this.scene = new THREE.Scene();
-    this.scene.background = createSkyTexture();
-    this.scene.fog = new THREE.Fog(FOG_COLOR, 140, 1000);
+    // Interview Quest's night-navy backdrop around the lit office
+    this.scene.background = new THREE.Color(VARIANT.style.background);
+    if (VARIANT.style.bodyClass) document.body.classList.add(VARIANT.style.bodyClass);
 
-    // Camera setup - third person
-    this.camera = new THREE.PerspectiveCamera(
-      60,
-      container.clientWidth / container.clientHeight,
-      0.5, // the camera never gets this close to anything; a larger near plane keeps thin floor layers from flickering
-      1600
-    );
-    this.camera.position.set(0, 5.5, 23.5);
-    this.camera.lookAt(0, 1.3, 15.4);
+    // Camera: main's low third-person camera that eases after the player (experiments swap it in variant.ts)
+    this.rig = new CameraRig(VARIANT, AREA_LABELS, container.clientWidth / container.clientHeight, container.clientHeight, this.playerPosition);
 
     // Renderer setup
     // Draw into the page's existing canvas; a second canvas would land below the viewport
     const canvas = container.querySelector<HTMLCanvasElement>('#game-canvas') ?? undefined;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const scale = VARIANT.style.pixelScale;
+    this.renderer.setPixelRatio(scale < 1 ? scale : Math.min(window.devicePixelRatio, 1.75));
+    if (scale < 1) this.renderer.domElement.style.imageRendering = 'pixelated';
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // furniture doesn't move, so the shadow map is drawn once; people get soft blob shadows instead
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     if (!canvas) container.appendChild(this.renderer.domElement);
 
     this.lighting = setupLighting(this.renderer, this.scene);
@@ -113,13 +138,20 @@ export class Game {
     this.walls = world.walls;
     this.activities = world.activities;
     this.fireLight = world.fireLight;
+    // the overhead experiment cameras need the dollhouse cutaway so rooms read from above;
+    // main's camera keeps full-height walls and cuts away whatever stands in front of the player
+    if (VARIANT.camera !== 'original') applyCutaway(world.root, world.walls);
+    addIsoDecor(world.root, this.colliders);
+    for (const o of this.scene.children) if (o.userData.exterior) o.visible = false;
     this.createSeatMarkers();
+    this.createAreaLabels();
 
     // Create player
     this.playerRig = createCharacter(PLAYER_LOOK);
     this.player = this.playerRig.group;
     this.player.position.copy(this.playerPosition);
     this.player.rotation.y = Math.PI; // facing the receptionist
+    this.addContactShadow(this.player);
     this.scene.add(this.player);
 
     // Create NPCs
@@ -130,6 +162,12 @@ export class Game {
 
     // Same bounce light on every material, and labels/glows exempt from tone mapping
     this.lighting.applyEnvironment(this.scene);
+    // Painterly look: stepped toon shading in the shared palette, then ink, grain and vignette
+    toonify(this.scene, createRampTexture());
+    this.painterly = createPainterly(this.renderer, this.scene, this.camera, container.clientWidth, container.clientHeight);
+    this.painterly.setWorldPerPixel(this.rig.worldPerPixel());
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', (e) => { this.reducedMotion = e.matches; });
+    if (new URLSearchParams(location.search).has('debug')) (window as any).__openPlan = this;
 
     // Input
     this.setupInput();
@@ -159,6 +197,7 @@ export class Game {
       mesh.userData.rig = rig;
       mesh.userData.sitting = !!char.sitting;
       mesh.userData.room = roomAt(this.rooms, char.position[0], char.position[2]);
+      this.addContactShadow(mesh);
       
       this.scene.add(mesh);
       this.characters.set(char.id, mesh);
@@ -166,7 +205,8 @@ export class Game {
       // Create label
       const label = document.createElement('div');
       label.className = 'character-label';
-      label.textContent = char.name;
+      label.innerHTML = nameTagHtml(char);
+      label.style.setProperty('--tag-color', paint(lookForCharacter(char.id).top));
       label.style.display = 'none';
       this.uiContainer.appendChild(label);
       this.characterLabels.set(char.id, label);
@@ -186,6 +226,8 @@ export class Game {
       // Gentle rotation, each at its own pace
       mesh.userData.rotationSpeed = 0.5 + Math.random() * 0.5;
       mesh.userData.bobOffset = Math.random() * Math.PI * 2;
+      const blob = createBlobShadow(0.35, 0.3);
+      mesh.add(blob);
 
       this.scene.add(mesh);
       this.itemMeshes.set(item.id, mesh);
@@ -231,8 +273,17 @@ export class Game {
       else if (marker?.userData.activity) this.startActivity(marker.userData.activity as ActivitySpot);
     });
 
+    // zoom (experiment cameras only; main's camera has a fixed distance): wheel / pinch, or + and -
+    const canZoom = zoomable(VARIANT.camera);
+    if (canZoom) dom.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this.setZoom(zoomBy(this.rig.getZoom(), -Math.sign(e.deltaY)));
+    }, { passive: false });
+
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key.toLowerCase());
+      if (canZoom && (e.key === '+' || e.key === '=')) this.setZoom(zoomBy(this.rig.getZoom(), 1));
+      if (canZoom && (e.key === '-' || e.key === '_')) this.setZoom(zoomBy(this.rig.getZoom(), -1));
       
       if (e.key.toLowerCase() === 'e') {
         this.interact();
@@ -251,9 +302,10 @@ export class Game {
   }
 
   private interact() {
-    // E during a call hangs up
+    // E during a call wraps it up: the coworker finishes their line and says goodbye
+    // (E again while they do hangs up at once)
     if (this.voiceClient.isActive()) {
-      this.voiceClient.endCall();
+      this.voiceClient.hangUp('walk-away');
       return;
     }
 
@@ -283,12 +335,11 @@ export class Game {
 
   private updatePlayer(delta: number) {
     const speed = 5;
-    const direction = new THREE.Vector3();
-
-    if (this.keys.has('w') || this.keys.has('arrowup')) direction.z -= 1;
-    if (this.keys.has('s') || this.keys.has('arrowdown')) direction.z += 1;
-    if (this.keys.has('a') || this.keys.has('arrowleft')) direction.x -= 1;
-    if (this.keys.has('d') || this.keys.has('arrowright')) direction.x += 1;
+    // WASD / arrows: relative to the camera yaw; with main's camera (yaw 0) that is main's mapping, W = north (-z)
+    const move = this.debugMove ?? screenMove(inputFromKeys(this.keys), VARIANT.yawDeg);
+    const direction = new THREE.Vector3(move.x, 0, move.z);
+    const startX = this.playerPosition.x;
+    const startZ = this.playerPosition.z;
 
     if (this.activity) {
       if (direction.length() > 0) {
@@ -341,22 +392,21 @@ export class Game {
 
       this.player.position.copy(this.playerPosition);
 
-      // Turn smoothly toward the movement direction
+      // Turn smoothly toward the movement direction (eased and speed-capped, never a snap)
       const targetYaw = Math.atan2(direction.x, direction.z);
-      let diff = targetYaw - this.player.rotation.y;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      this.player.rotation.y += diff * Math.min(1, delta * 12);
+      this.player.rotation.y = this.reducedMotion ? targetYaw : turnToward(this.player.rotation.y, targetYaw, delta);
     }
 
     // Sit pose eases in and out; the body drops to seat height
     this.sitAmount += ((this.currentSeat ? 1 : 0) - this.sitAmount) * Math.min(1, delta * 8);
     this.player.position.set(this.playerPosition.x, this.lastSitY * this.sitAmount, this.playerPosition.z);
 
-    // Walk cycle eases in and out
-    const target = direction.length() > 0 ? 1 : 0;
-    this.walkAmount += (target - this.walkAmount) * Math.min(1, delta * 10);
+    // Walk cycle: the stride follows the distance really covered (so walking into a
+    // wall doesn't moonwalk), capped so a teleport or a long frame isn't a sprint
+    const travelled = this.currentSeat ? 0 : Math.min(Math.hypot(this.playerPosition.x - startX, this.playerPosition.z - startZ), speed * Math.min(delta, 0.1) * 1.5);
+    this.gait = advanceGait(this.gait, travelled, delta, this.reducedMotion);
     this.reachAmount += ((this.activity ? 1 : 0) - this.reachAmount) * Math.min(1, delta * 8);
-    animateCharacter(this.playerRig, this.clock.elapsedTime, this.walkAmount, this.sitAmount, this.reachAmount);
+    animateCharacter(this.playerRig, gaitPose(this.gait, this.clock.elapsedTime, this.reducedMotion), this.clock.elapsedTime, this.sitAmount, this.reachAmount, this.reducedMotion);
 
     // fun-zone props: the one being played animates, the rest settle back
     const hand = this.handPosition();
@@ -365,18 +415,9 @@ export class Game {
       spot.animate(active ? this.activity!.elapsed : 0, active, hand);
     }
 
-    // Update camera to follow player (smoothed, low third-person). It stays inside the
-    // building, at least 5 units behind the player; close to the front windows that
-    // means backing out past the south wall, which is then cut away like any other
-    // wall between the camera and the player.
-    const pz = this.playerPosition.z;
-    const camTarget = new THREE.Vector3(
-      Math.max(-22.5, Math.min(22.5, this.playerPosition.x)), // a little in from the side walls so pillars don't fill the view
-      5.5,
-      Math.max(Math.min(23.5, pz + 9.5), pz + 5)
-    );
-    this.camera.position.lerp(camTarget, Math.min(1, delta * 5));
-    this.camera.lookAt(this.playerPosition.x, 1.3, this.playerPosition.z - 1);
+    // Camera eases after the player (snaps under reduced motion)
+    this.rig.update(delta, this.playerPosition, roomAt(this.rooms, this.playerPosition.x, this.playerPosition.z), this.reducedMotion);
+    this.painterly.setWorldPerPixel(this.rig.worldPerPixel());
 
     // The key light and its shadow box follow the player; the fire flickers
     this.lighting.follow(this.playerPosition);
@@ -389,18 +430,27 @@ export class Game {
 
   // ------------------------------------------------------------------ seats
 
-  /** Small white circles over every seat and fun-zone activity; click one to sit or play. */
+  /** Small gold markers over every seat and fun-zone activity; click one to sit or play. */
   private createSeatMarkers() {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 128;
     const ctx = canvas.getContext('2d')!;
+    // Interview Quest's quest-spot marker: an amber ring with a cream border and a soft glow
+    const glow = ctx.createRadialGradient(64, 64, 30, 64, 64, 62);
+    glow.addColorStop(0, 'rgba(255, 181, 71, 0.45)');
+    glow.addColorStop(1, 'rgba(255, 181, 71, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, 128, 128);
     ctx.beginPath();
-    ctx.arc(64, 64, 58, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+    ctx.arc(64, 64, 40, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffb547';
     ctx.fill();
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#fff3dd';
+    ctx.stroke();
     ctx.beginPath();
-    ctx.arc(64, 64, 48, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff';
+    ctx.arc(64, 64, 14, 0, Math.PI * 2);
+    ctx.fillStyle = '#1b1206';
     ctx.fill();
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -446,7 +496,7 @@ export class Game {
       const resting = spot && this.activityMinutesLeft(spot) > 0 ? 0.35 : 1;
       (marker.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, (range - dist) / 1.5)) * resting;
       const base = marker === this.hoveredMarker ? 0.66 : 0.5;
-      marker.scale.setScalar(base * (1 + Math.sin(t * 3 + x) * 0.06));
+      marker.scale.setScalar(base * (this.reducedMotion ? 1 : 1 + Math.sin(t * 3 + x) * 0.06));
     }
     if (busy) this.hoveredMarker = null;
   }
@@ -659,32 +709,34 @@ export class Game {
   }
 
   /**
-   * Rooms are closed boxes: their contents are only drawn when the player is at the
-   * door or inside, and the wall facing the camera is cut away while inside.
+   * main's camera: rooms are closed boxes whose contents are only drawn when the
+   * player is at the door or inside, the wall facing the camera is cut away while
+   * inside, and any wall between the camera and the player is hidden so the player
+   * is never behind one. The overhead experiment cameras see every room through the
+   * dollhouse cutaway, so for them we only track which room the player is in (that
+   * still gates who you can talk to and what you can pick up).
    */
   private updateRooms() {
     const p = this.playerPosition;
     this.playerRoom = roomAt(this.rooms, p.x, p.z);
+    if (VARIANT.camera !== 'original') return;
     const near = roomAt(this.rooms, p.x, p.z, 0.6);
-    for (const room of this.rooms) {
-      room.interior.visible = room === near;
-    }
+    for (const room of this.rooms) room.interior.visible = room === near;
 
-    // Walls: the one facing the camera goes while you're inside the room, and so does
-    // any wall that happens to sit between the camera and the player.
     for (const wall of this.walls) wall.visible = true;
     for (const room of this.rooms) {
       for (const o of room.front) o.visible = room !== this.playerRoom;
     }
-    const target = new THREE.Vector3(p.x, 1.2, p.z);
-    for (const lateral of [-0.7, 0, 0.7]) {
-      const aim = target.clone();
-      aim.x += lateral;
-      const dir = aim.sub(this.camera.position);
-      const dist = dir.length();
-      this.occlusionRay.set(this.camera.position, dir.normalize());
-      this.occlusionRay.far = Math.max(0, dist - 0.3);
-      for (const hit of this.occlusionRay.intersectObjects(this.walls, false)) hit.object.visible = false;
+    const from = this.camera.position;
+    const aim = new THREE.Vector3();
+    for (const h of OCCLUSION_HEIGHTS) {
+      for (const lateral of OCCLUSION_LATERALS) {
+        aim.set(p.x + lateral, h, p.z).sub(from);
+        const dist = aim.length();
+        this.occlusionRay.set(from, aim.normalize());
+        this.occlusionRay.far = Math.max(0, dist - 0.3);
+        for (const hit of this.occlusionRay.intersectObjects(this.walls, false)) hit.object.visible = false;
+      }
     }
     this.characters.forEach((mesh) => {
       const room = mesh.userData.room as Room | null;
@@ -694,6 +746,26 @@ export class Game {
       const room = mesh.userData.room as Room | null;
       mesh.visible = !room || room === near;
     });
+  }
+
+  /** Walls currently drawn that a straight line from the camera to the player passes through (should always be none). */
+  wallsBlockingPlayer(): number {
+    const p = this.playerPosition;
+    const from = this.camera.position;
+    const ray = new THREE.Raycaster();
+    const aim = new THREE.Vector3();
+    let n = 0;
+    for (const h of OCCLUSION_HEIGHTS) {
+      aim.set(p.x, h, p.z).sub(from);
+      const dist = aim.length();
+      ray.set(from, aim.normalize());
+      ray.far = Math.max(0, dist - 0.3);
+      n += ray.intersectObjects(this.walls, false).filter((hit) => {
+        for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) if (!o.visible) return false;
+        return true;
+      }).length;
+    }
+    return n;
   }
 
   private checkNearbyInteractables() {
@@ -732,16 +804,17 @@ export class Game {
 
   private updateNPCs(delta: number) {
     this.characters.forEach((mesh, id) => {
+      // NPCs stand or sit at their posts; they share the walk cycle so idle breathing matches the player
       const time = this.clock.elapsedTime + mesh.userData.bobOffset;
-      animateCharacter(mesh.userData.rig as CharacterRig, time, 0, mesh.userData.sitting ? 1 : 0);
+      const gait = advanceGait((mesh.userData.gait as GaitState | undefined) ?? createGait(), 0, delta, this.reducedMotion);
+      mesh.userData.gait = gait;
+      animateCharacter(mesh.userData.rig as CharacterRig, gaitPose(gait, time, this.reducedMotion), time, mesh.userData.sitting ? 1 : 0, 0, this.reducedMotion);
 
       // Turn to face the player when they're close
       const dx = this.playerPosition.x - mesh.position.x;
       const dz = this.playerPosition.z - mesh.position.z;
       if (Math.hypot(dx, dz) < 7) {
-        let diff = Math.atan2(dx, dz) - mesh.rotation.y;
-        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        mesh.rotation.y += diff * Math.min(1, delta * 4);
+        mesh.rotation.y = turnToward(mesh.rotation.y, Math.atan2(dx, dz), delta, 4, 3);
       }
     });
   }
@@ -751,35 +824,86 @@ export class Game {
     this.itemMeshes.forEach(mesh => {
       if (!mesh.userData.item.collected) {
         const spin = mesh.userData.spin as THREE.Group;
+        if (this.reducedMotion) {
+          spin.position.y = 0.35;
+          return;
+        }
         spin.rotation.y += delta * mesh.userData.rotationSpeed;
         spin.position.y = 0.35 + Math.sin(t * 2 + mesh.userData.bobOffset) * 0.08;
       }
     });
   }
 
+  /** Screen position (CSS px) of a world point, or null when it's off screen. */
+  private toScreen(v: THREE.Vector3): { x: number; y: number } | null {
+    const p = v.clone().project(this.camera);
+    if (p.x < -1.1 || p.x > 1.1 || p.y < -1.1 || p.y > 1.1) return null;
+    return {
+      x: (p.x * 0.5 + 0.5) * this.renderer.domElement.clientWidth,
+      y: (p.y * -0.5 + 0.5) * this.renderer.domElement.clientHeight,
+    };
+  }
+
+  /** Name tags float over every coworker; the nearby one grows to show their role and the talk key. */
   private updateLabels() {
     this.characterLabels.forEach((label, id) => {
       const mesh = this.characters.get(id);
       if (!mesh) return;
-
-      const char = mesh.userData.character;
       const isNearby = this.nearbyCharacter?.id === id;
-      
-      if (isNearby) {
-        const vector = mesh.position.clone();
-        vector.y += 2.4;
-        vector.project(this.camera);
-
-        const x = (vector.x * 0.5 + 0.5) * this.renderer.domElement.clientWidth;
-        const y = (vector.y * -0.5 + 0.5) * this.renderer.domElement.clientHeight;
-
-        label.style.display = 'block';
-        label.style.left = `${x}px`;
-        label.style.top = `${y}px`;
-      } else {
+      const head = mesh.position.clone();
+      head.y += mesh.userData.sitting ? 2.0 : 2.5;
+      const at = this.toScreen(head);
+      if (!at) {
         label.style.display = 'none';
+        return;
       }
+      label.style.display = 'block';
+      label.classList.toggle('near', isNearby);
+      label.style.transform = `translate(${at.x}px, ${at.y}px) translate(-50%, -100%)`;
     });
+    for (const { el, pos } of this.areaLabels) {
+      const at = this.toScreen(pos);
+      el.style.display = at ? 'block' : 'none';
+      if (at) el.style.transform = `translate(${at.x}px, ${at.y}px) translate(-50%, -50%)`;
+    }
+  }
+
+  /** Small street-sign style labels for rooms and areas, like Interview Quest's street names. */
+  private createAreaLabels() {
+    for (const a of AREA_LABELS) {
+      const el = document.createElement('div');
+      el.className = 'area-label';
+      el.textContent = a.name;
+      el.style.display = 'none';
+      this.uiContainer.appendChild(el);
+      this.areaLabels.push({ el, pos: new THREE.Vector3(a.x, 0.2, a.z) });
+    }
+  }
+
+  /** Soft round contact shadow under a person (they don't cast into the static shadow map). */
+  private addContactShadow(group: THREE.Object3D) {
+    group.traverse((o) => { o.castShadow = false; });
+    group.add(createBlobShadow(0.62, 0.45));
+  }
+
+  private applyFrustum() {
+    const el = this.renderer?.domElement;
+    this.rig.resize(el?.clientWidth || window.innerWidth, el?.clientHeight || window.innerHeight);
+    this.painterly?.setWorldPerPixel(this.rig.worldPerPixel());
+  }
+
+  /** Zoom the view (clamped); the camera rig eases towards it. */
+  setZoom(z: number) {
+    this.rig.setZoom(z);
+  }
+
+  getZoom(): number {
+    return this.rig.getZoom();
+  }
+
+  /** Where the player stands, for tests and the debug hook. */
+  getPlayerPosition(): { x: number; z: number } {
+    return { x: this.playerPosition.x, z: this.playerPosition.z };
   }
 
   private onStateUpdate(state: any) {
@@ -787,26 +911,67 @@ export class Game {
   }
 
   private onResize(container: HTMLElement) {
-    this.camera.aspect = container.clientWidth / container.clientHeight;
-    this.camera.updateProjectionMatrix();
     this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.painterly.setSize(container.clientWidth, container.clientHeight, this.renderer.getPixelRatio());
+    this.applyFrustum();
+  }
+
+  /** Frame-time samples for the adaptive resolution below. */
+  private slowFrames = 0;
+  private sampledFrames = 0;
+  private lowered = false;
+
+  /**
+   * Keep 60fps on modest laptops: if most frames over a 2-second window take
+   * longer than ~20 ms, drop the render resolution to 1x once.
+   */
+  private adaptQuality(rawDelta: number) {
+    if (this.lowered || document.hidden) return;
+    this.sampledFrames++;
+    if (rawDelta > 0.02) this.slowFrames++;
+    if (this.sampledFrames < 120) return;
+    if (this.slowFrames > 80 && this.renderer.getPixelRatio() > 1) {
+      this.lowered = true;
+      const el = this.renderer.domElement;
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(el.clientWidth, el.clientHeight, false);
+      this.painterly.setSize(el.clientWidth, el.clientHeight, 1);
+      this.applyFrustum();
+    }
+    this.sampledFrames = 0;
+    this.slowFrames = 0;
   }
 
   private animate = () => {
     requestAnimationFrame(this.animate);
     
     // cap the step: the first frame (or one after a hidden tab) can be seconds long
-    const delta = Math.min(this.clock.getDelta(), 0.1);
+    const raw = this.clock.getDelta();
+    this.adaptQuality(raw);
+    const delta = Math.min(raw, 0.1);
     
     this.updateClock(delta);
     this.updatePlayer(delta);
     this.updateSeatMarkers();
     this.updateNPCs(delta);
+    this.updateCallRange(delta);
     this.updateItems(delta);
     this.updateLabels();
     
-    this.renderer.render(this.scene, this.camera);
+    this.painterly.render();
   };
+
+  /** Walking out of range of the coworker you're talking to wraps the conversation up. */
+  private updateCallRange(delta: number) {
+    const who = this.voiceClient.isActive() && !this.voiceClient.isEnding() ? this.voiceClient.getCurrentCharacter() : null;
+    const mesh = who ? this.characters.get(who.id) : undefined;
+    if (!mesh) {
+      this.walkAway.reset();
+      return;
+    }
+    const d = Math.hypot(mesh.position.x - this.playerPosition.x, mesh.position.z - this.playerPosition.z);
+    if (this.walkAway.update(d, delta)) this.voiceClient.hangUp('walk-away');
+  }
 
   getEngine(): GameEngine {
     return this.engine;
