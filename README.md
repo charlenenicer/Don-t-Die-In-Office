@@ -12,6 +12,8 @@ In this playthrough, a beginner says yes to almost everything: gossip, a weekend
 
 [Watch the full-quality video (MP4, 76 s)](docs/media/playthrough.mp4)
 
+[Watch the current build: painted follow camera, natural walk, and the new conversation endings (MP4, 41 s)](docs/media/open-plan-gameplay.mp4)
+
 ## 🎮 The Game
 
 You're a new hire on an open-plan office floor. Your goal: survive and get promoted without burning out. Walk freely, talk by voice to coworkers and the boss, accept or decline their offers, and manage your stats.
